@@ -128,5 +128,9 @@ jobs:
       - name: Static analysis (Semgrep)
         run: |
           python3 -m pip install --quiet "semgrep==${SEMGREP_VERSION}"
-          semgrep scan --error --metrics=off \
-            --config p/default --config p/github-actions --config p/secrets
+          status=0
+          semgrep scan --error --metrics=off --json --output semgrep.json \
+            --config p/default --config p/github-actions --config p/secrets || status=$?
+          # Turn each finding into an annotation on the file and line it concerns.
+          python3 .github/scripts/semgrep-annotations.py semgrep.json
+          exit "$status"
