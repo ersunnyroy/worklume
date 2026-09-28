@@ -140,6 +140,89 @@ does not open the store yet; the tracker (E09-S04) owns its lifecycle.
 desktop workflow runs it with `--ignored` on macOS and Windows, and on Ubuntu inside
 `dbus-run-session` with GNOME Keyring unlocked.
 
+## Watchdog and diagnostics
+
+E09-S11. The code is in `src-tauri/src/watchdog.rs`, `src-tauri/src/diagnostics/` and
+`src-tauri/src/startup.rs`.
+
+**Watchdog.**
+
+- Release builds start as a supervisor process that runs the agent as a child. The child is the
+  same executable with `WORKLUME_SUPERVISED=1` set, so arguments pass through unchanged.
+- The agent's exit status decides what happens:
+  - success means the member quit, or a second launch handed over to the running agent, so the
+    supervisor exits too;
+  - exit code 75 asks for an immediate restart (the updater, E09-S10), which is not a crash;
+  - anything else, including being killed, is a crash, restarted after 1 second.
+- Crash-loop protection: a crash that follows 5 restarts within 5 minutes stops the supervisor.
+  It logs the crash loop and reports it.
+- The member sees the tray icon disappear. An in-app explanation belongs to the agent UI
+  (E09-S09).
+- A failed launch, for example an executable removed mid-update, counts as a crash.
+- Debug builds run the agent directly, so `tauri dev` can restart it freely.
+  `WORKLUME_WATCHDOG=on` tries the supervisor in a debug build; release builds ignore the
+  variable, so the watchdog cannot be switched off there.
+- A 1-second delay leaves time for a logout, which also stops the supervisor, to win the race
+  against a pointless restart.
+- If the supervisor itself is killed, the agent keeps running unsupervised until the next launch.
+  The optional Windows service (E11-S07) covers that case on Windows.
+- Checked end to end under Xvfb: `kill -9` on the agent brought a new agent after about one
+  second, and the sixth kill within the window stopped the supervisor.
+
+**Logs.**
+
+- One JSON object per line, in daily files per process (`agent.<date>.log`,
+  `supervisor.<date>.log`), with 7 days kept.
+- They go to Tauri's app log folder: `~/Library/Logs/com.worklume.agent` on macOS, and
+  `<local data>/com.worklume.agent/logs` elsewhere. The supervisor computes the folder without a
+  Tauri context, and a test keeps it equal to Tauri's `app_log_dir`. On Unix the folder is
+  `0700`.
+- Writes are synchronous, not through a background thread, so the lines just before a crash are
+  on disk when the watchdog restarts the agent.
+- The default filter is `info` for Worklume's crates and `warn` for dependencies. `log` records
+  from Tauri and the webview are bridged in. `WORKLUME_LOG` overrides the filter.
+- Privacy: log states, counts, durations and error kinds, never window titles, URLs, file names,
+  payloads, keys or tokens. As a safety net, the home folder path is replaced with `~`, both as
+  written and in the JSON-escaped form it takes on Windows.
+- Panics are logged with their location.
+
+**`SQLCipher`'s log.**
+
+- It goes to `sqlcipher.log` in the log folder at warning level, instead of stderr.
+- The level is set before the destination, so `SQLCipher`'s informational line quoting the path
+  (which contains the account name) is never written.
+- At warning level, `SQLCipher` names files only during `cipher_migrate`, which the agent does not
+  use.
+- If the file cannot be opened (on Windows, `SQLCipher` opens paths through the ANSI code page),
+  its log is switched off and a warning is logged.
+
+**Crash reports.**
+
+- Sentry, sent through `worklume_sync::http`, the agent's HTTPS client. It uses native TLS with
+  the operating system's certificate store (Keychain, the Windows store, `/etc/ssl`), so reports
+  get through corporate proxies that inspect TLS with their own root certificate. Sentry's
+  default client would trust only a bundled list. Sign-in and sync (E09-S03, S05) reuse the same
+  client, and HTTP stays in `sync`, as the crate boundaries require.
+- Two kinds are sent: Rust panics in either process, and the supervisor's report of an agent that
+  died (exit code or signal, uptime, recent restarts, grouped by way of dying). The supervisor's
+  reports cover native crashes in the webview or OS libraries.
+- Nothing identifies the member or machine: `send_default_pii` is off, there are no breadcrumbs,
+  and a `before_send` hook removes the hostname, user, request, device name, module list and
+  debug images, and shortens home paths in messages, tags, extras and stack frames.
+- The DSN comes from the build environment (`WORKLUME_SENTRY_DSN`), so nothing is hard-coded and
+  builds without it send nothing. Release builds get it from a CI secret with the updater
+  (E09-S10).
+- Letting an organization switch crash reports off belongs with policy config (E09-S06).
+
+**Scope changes from the backlog.**
+
+- Native memory dumps (crashpad or breakpad) are not collected. The memory of an
+  employee-monitoring agent can hold screenshots, URLs and window titles, so dumps need a privacy
+  decision first. Until then, the supervisor's crash reports record native crashes.
+- The log bundle upload waits for the server command channel (E09-S05) and
+  `POST /v1/desktop/logs/upload-url`. The server asks for the bundle with an `upload_logs`
+  command; the bundle is the files described above, capped at 20 MB.
+
 ## Rust tasks in Turborepo
 
 The desktop `package.json` wraps Cargo: `lint` runs ESLint, `cargo fmt --check` and Clippy with
@@ -207,8 +290,10 @@ the CLI and the crates together.
 ## Deferred
 
 - Localised tray labels and UI strings: E09-S09 (agent UI).
-- Logging of best-effort failures (hiding or focusing a window): E09-S11. SQLCipher also logs
-  decryption failures to stderr; E09-S11 routes its log into the agent's.
+- Logging of best-effort failures (hiding or focusing a window): with the tracker (E09-S04), now
+  that logging exists.
 - Opening the store at startup, off the main thread, and showing its state: E09-S04.
 - A monochrome template tray icon for the macOS menu bar: E10-S07.
-- Code signing, notarisation and the updater: E09-S10 and E10–E13.
+- Code signing, notarisation and the updater: E09-S10 and E10–E13. The updater restarts the
+  agent through exit code 75, so the watchdog stays in charge.
+- Log bundle upload and native memory dumps: see "Watchdog and diagnostics".

@@ -1,14 +1,19 @@
 //! Worklume desktop agent shell: a tray-resident Tauri application.
 //!
 //! The window starts hidden and closing it only hides it, so the agent keeps running from the
-//! tray. A second launch focuses the running agent instead of starting another one. Tracking,
-//! storage and sync live in the `worklume-core`, `worklume-storage` and `worklume-sync` crates;
-//! OS access lives in `worklume-platform`.
+//! tray. A second launch focuses the running agent instead of starting another one. In release
+//! builds a watchdog process restarts the agent after a crash. Tracking, storage and sync live
+//! in the `worklume-core`, `worklume-storage` and `worklume-sync` crates; OS access lives in
+//! `worklume-platform`.
 
+pub mod diagnostics;
 pub mod ipc;
+mod startup;
 mod tray;
+pub mod watchdog;
 mod window;
 
+pub use startup::start;
 pub use tray::TrayAction;
 pub use window::{MAIN_WINDOW, on_run_event};
 
