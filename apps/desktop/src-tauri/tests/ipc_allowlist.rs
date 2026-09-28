@@ -23,6 +23,15 @@ fn window(app: &App<MockRuntime>, label: &str) -> WebviewWindow<MockRuntime> {
         .expect("window builds")
 }
 
+/// The origin Tauri serves the app from: Windows (`WebView2`) and Android use an HTTP workaround.
+fn local_origin() -> &'static str {
+    if cfg!(any(windows, target_os = "android")) {
+        "http://tauri.localhost"
+    } else {
+        "tauri://localhost"
+    }
+}
+
 fn invoke(
     window: &WebviewWindow<MockRuntime>,
     command: &str,
@@ -33,7 +42,7 @@ fn invoke(
             cmd: command.into(),
             callback: CallbackFn(0),
             error: CallbackFn(1),
-            url: "tauri://localhost".parse().expect("valid URL"),
+            url: local_origin().parse().expect("valid URL"),
             body: InvokeBody::default(),
             headers: tauri::http::HeaderMap::default(),
             invoke_key: INVOKE_KEY.to_owned(),
