@@ -1,0 +1,40 @@
+{
+  "app": {
+    "name": "Worklume"
+  },
+  "shell": {
+    "skipToContent": "Skip to main content",
+    "primaryNavigation": "Primary",
+    "openNavigation": "Open navigation",
+    "navigationTitle": "Navigation",
+    "closeNavigation": "Close navigation",
+    "environmentBadge": "{{environment}} environment",
+    "pageTitle": "{{page}} · Worklume"
+  },
+  "environments": {
+    "local": "Local",
+    "development": "Development",
+    "staging": "Staging",
+    "production": "Production"
+  },
+  "nav": {
+    "home": "Home"
+  },
+  "home": {
+    "title": "Welcome to Worklume",
+    "body": "Your workspace is being set up. Time tracking, timesheets and reports will appear here as they launch."
+  },
+  "errors": {
+    "notFound": {
+      "title": "Page not found",
+      "body": "The page you're looking for doesn't exist or has moved.",
+      "home": "Go to home"
+    },
+    "unexpected": {
+      "title": "Something went wrong",
+      "body": "This page couldn't load. Try again, and contact support if it keeps happening.",
+      "retry": "Try again",
+      "reference": "Reference: {{reference}}"
+    }
+  }
+}
