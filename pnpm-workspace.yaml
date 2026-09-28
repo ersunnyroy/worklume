@@ -6,8 +6,10 @@ packages:
 engineStrict: true
 # Record exact versions; upgrades happen through reviewed dependency PRs.
 saveExact: true
-# Packages may run install scripts only when listed here.
-allowBuilds: {}
+# Packages may run install scripts only when listed here with true. Listing false records a
+# deliberate refusal: @scarf/scarf (pulled in by Spectral) only sends install analytics.
+allowBuilds:
+  '@scarf/scarf': false
 # Refuse versions published less than seven days ago, so compromised releases are usually
 # caught and pulled before they reach us. Setting it explicitly makes pnpm fail instead of
 # silently adding exclusions. An urgent security fix can be allowed through
@@ -22,3 +24,8 @@ trustPolicy: no-downgrade
 trustPolicyIgnoreAfter: 43200
 # Transitive dependencies may come only from the registry, never from Git URLs or tarballs.
 blockExoticSubdeps: true
+peerDependencyRules:
+  allowedVersions:
+    # openapi-typescript declares TypeScript ^5 but generates correctly with 6.0; the generated
+    # client is typechecked with 6.0 in CI, which would catch a break.
+    openapi-typescript>typescript: '6'

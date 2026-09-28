@@ -1,0 +1,174 @@
+openapi: 3.1.1
+info:
+  title: Worklume API
+  version: 1.0.0
+  summary: The single REST API behind the web app, the mobile app, the desktop agent and integrations.
+  description: |
+    Contract-first: this document is the source of truth. The API implements it, clients are
+    generated from it, and CI fails when the two drift apart.
+
+    Conventions that apply to every operation are described once, in the architecture's API
+    catalog (`docs/planning/phase-2-api.md`), and enforced by the Spectral rules in this package:
+
+    - The organization is always taken from the access token. No tenant operation accepts an
+      organization ID from the client.
+    - JSON bodies use `snake_case`; timestamps are UTC ISO 8601.
+    - Errors are RFC 9457 problem details (`application/problem+json`) with a stable `code` and
+      the `request_id` to quote to support.
+  contact:
+    name: Worklume engineering
+  license:
+    name: Proprietary
+    identifier: LicenseRef-Proprietary
+servers:
+  - url: https://api.worklume.com
+    description: Production
+  - url: http://localhost:8000
+    description: Local development
+tags:
+  - name: Platform
+    description: Service health, used by load balancers and uptime checks.
+security:
+  - bearerAuth: []
+paths:
+  /health:
+    x-worklume-unversioned: true
+    get:
+      operationId: getHealth
+      tags: [Platform]
+      summary: Liveness check
+      description: |
+        Answers as long as the process can serve requests. It checks no dependencies, so a
+        failing database never makes the load balancer restart healthy API processes.
+      security: []
+      responses:
+        '200':
+          description: The process is running.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthStatus'
+              example:
+                status: ok
+        default:
+          $ref: '#/components/responses/Problem'
+  /ready:
+    x-worklume-unversioned: true
+    get:
+      operationId: getReadiness
+      tags: [Platform]
+      summary: Readiness check
+      description: |
+        Answers 200 only when the API can serve traffic: the database and cache respond. The
+        response never names the failing dependency, because this endpoint is reachable without
+        authentication.
+      security: []
+      responses:
+        '200':
+          description: Ready to serve traffic.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReadinessStatus'
+              example:
+                status: ready
+        '503':
+          description: A dependency is unavailable; the load balancer should route elsewhere.
+          headers:
+            Retry-After:
+              $ref: '#/components/headers/RetryAfter'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+              example:
+                type: https://docs.worklume.com/errors/service_unavailable
+                title: Service unavailable
+                status: 503
+                code: service_unavailable
+                request_id: 0192f0a4-7c1e-7d3a-9b2f-5d8e6a4c3b21
+        default:
+          $ref: '#/components/responses/Problem'
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: |
+        Access token (15 minutes), bound to one organization. Desktop and mobile clients also
+        send a `DPoP` proof header (RFC 9449).
+  headers:
+    RetryAfter:
+      description: Seconds to wait before retrying.
+      schema:
+        type: integer
+        minimum: 0
+  responses:
+    Problem:
+      description: An error, described as RFC 9457 problem details.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+  schemas:
+    HealthStatus:
+      type: object
+      additionalProperties: false
+      required: [status]
+      properties:
+        status:
+          type: string
+          const: ok
+    ReadinessStatus:
+      type: object
+      additionalProperties: false
+      required: [status]
+      properties:
+        status:
+          type: string
+          const: ready
+    Problem:
+      type: object
+      description: RFC 9457 problem details, extended with a stable code and the request ID.
+      required: [type, title, status, code, request_id]
+      properties:
+        type:
+          type: string
+          format: uri
+          description: Documentation URL for this kind of error.
+        title:
+          type: string
+          description: Short, human-readable summary that does not change between occurrences.
+        status:
+          type: integer
+          minimum: 400
+          maximum: 599
+        code:
+          type: string
+          pattern: '^[a-z][a-z0-9_]*$'
+          description: Stable, machine-readable error code, such as `validation_failed`.
+        detail:
+          type: string
+          description: Explanation of this occurrence. Never contains stack traces or internals.
+        errors:
+          type: array
+          description: Per-field validation errors, present for `validation_failed`.
+          items:
+            $ref: '#/components/schemas/FieldError'
+        request_id:
+          type: string
+          description: Identifier of the request, to quote when contacting support.
+    FieldError:
+      type: object
+      additionalProperties: false
+      required: [field, code, message]
+      properties:
+        field:
+          type: string
+          description: Path of the invalid field in the request, such as `ended_at`.
+        code:
+          type: string
+          pattern: '^[a-z][a-z0-9_]*$'
+        message:
+          type: string
