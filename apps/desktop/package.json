@@ -10,12 +10,13 @@
     "dev:frontend": "vite",
     "build": "vite build",
     "build:app": "tauri build",
-    "lint": "eslint --max-warnings=0 . && cargo fmt --package worklume-desktop --check && cargo clippy --package worklume-desktop --all-targets --locked -- -D warnings",
+    "lint": "eslint --max-warnings=0 . && node scripts/check-crate-boundaries.mjs && cargo fmt --all --check && cargo clippy --workspace --all-targets --locked -- -D warnings",
     "typecheck": "tsc -b",
-    "test": "vitest run && cargo test --package worklume-desktop --locked",
+    "test": "vitest run && node --test \"scripts/**/*.test.mjs\" && cargo test --workspace --locked",
     "tauri": "tauri"
   },
   "dependencies": {
+    "@tauri-apps/api": "2.11.1",
     "react": "19.3.0",
     "react-dom": "19.3.0"
   },

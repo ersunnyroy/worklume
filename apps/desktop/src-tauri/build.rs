@@ -1,6 +1,10 @@
-fn main() {
-    tauri_build::build();
+fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    // Listing app commands in the manifest puts them under Tauri's ACL: the webview may call a
+    // command only if a capability grants its generated `allow-<command>` permission.
+    let manifest = tauri_build::AppManifest::new().commands(&["agent_status"]);
+    tauri_build::try_build(tauri_build::Attributes::new().app_manifest(manifest))?;
     embed_common_controls_manifest_in_tests();
+    Ok(())
 }
 
 /// Tauri's tray and menus need version 6 of the Windows Common Controls, which an executable
