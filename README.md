@@ -14,6 +14,8 @@ share.
 | `apps/mobile`            | Expo (React Native) app; see its README                                         | E00-S09    |
 | `packages/tsconfig`      | Shared TypeScript settings                                                      | E00-S01    |
 | `packages/eslint-config` | Shared ESLint flat configs (`base`, `react`)                                    | E00-S01    |
+| `packages/api-contract`  | OpenAPI 3.1 contract and its Spectral rules; see its README                     | E00-S07    |
+| `packages/api-client`    | Typed API client generated from the contract                                    | E00-S07    |
 | `docs/planning`          | Research, architecture and implementation plan (source of truth)                | —          |
 | `docs/conventions`       | Repository conventions and tooling decisions                                    | —          |
 

@@ -10,8 +10,9 @@ revisited when its reason no longer holds.
 - pnpm settings live in `pnpm-workspace.yaml`; since pnpm 11, `.npmrc` holds only registry and
   auth settings. `engineStrict` fails installs on unsupported Node or pnpm versions, and
   `saveExact` records exact versions so upgrades arrive as reviewed pull requests.
-- `allowBuilds` is empty: no dependency may run install scripts until someone adds it here on
-  purpose.
+- No dependency may run install scripts unless `allowBuilds` lists it as `true`. Entries set to
+  `false` record a deliberate refusal (currently `@scarf/scarf`, which only sends install
+  analytics).
 - Install pnpm through Corepack (`corepack enable`) or pnpm's own installer. Do not let an
   older global pnpm switch itself to 12 through `packageManager`: that path skips pnpm 12's
   native binary and leaves a launcher script that Turborepo cannot spawn ("Exec format error").
