@@ -15,20 +15,20 @@
     "test:e2e": "playwright test"
   },
   "dependencies": {
-    "@tanstack/react-query": "5.104.0",
-    "@tanstack/react-router": "1.170.39",
+    "@tanstack/react-query": "5.103.1",
+    "@tanstack/react-router": "1.170.38",
     "i18next": "26.4.2",
     "radix-ui": "1.6.7",
     "react": "19.3.0",
     "react-dom": "19.3.0",
-    "react-i18next": "17.0.15",
+    "react-i18next": "17.0.14",
     "zod": "4.6.5"
   },
   "devDependencies": {
     "@axe-core/playwright": "4.13.0",
     "@playwright/test": "1.63.0",
     "@tailwindcss/vite": "4.3.3",
-    "@tanstack/eslint-plugin-query": "5.104.0",
+    "@tanstack/eslint-plugin-query": "5.103.1",
     "@tanstack/eslint-plugin-router": "1.162.0",
     "@tanstack/router-plugin": "1.168.40",
     "@testing-library/dom": "10.4.2",
@@ -43,10 +43,10 @@
     "@worklume/tsconfig": "workspace:*",
     "axe-core": "4.13.0",
     "eslint": "10.11.0",
-    "jsdom": "30.1.1",
+    "jsdom": "30.1.0",
     "tailwindcss": "4.3.3",
     "typescript": "6.0.3",
-    "vite": "8.3.1",
-    "vitest": "5.0.2"
+    "vite": "8.3.0",
+    "vitest": "5.0.1"
   }
 }

@@ -20,13 +20,13 @@ path = "src/main.rs"
 test = false
 
 [build-dependencies]
-tauri-build = { version = "2.7.0", features = [] }
+tauri-build = { version = "~2.6.3", features = [] }
 
 [dependencies]
-tauri = { version = "2.12.0", features = ["tray-icon"] }
+tauri = { version = "~2.11.5", features = ["tray-icon"] }
 
 [dev-dependencies]
-tauri = { version = "2.12.0", features = ["tray-icon", "test"] }
+tauri = { version = "~2.11.5", features = ["tray-icon", "test"] }
 
 [lints]
 workspace = true

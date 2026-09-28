@@ -15,9 +15,22 @@ revisited when its reason no longer holds.
 - Install pnpm through Corepack (`corepack enable`) or pnpm's own installer. Do not let an
   older global pnpm switch itself to 12 through `packageManager`: that path skips pnpm 12's
   native binary and leaves a launcher script that Turborepo cannot spawn ("Exec format error").
-- `minimumReleaseAge: 1440` refuses any version published less than a day ago. Because it is set
-  explicitly, pnpm fails on a too-new version instead of quietly adding it to an exclusion list.
-  This is why Turborepo is pinned to 2.11.4: 2.11.5 was hours old when the repository was set up.
+- Supply-chain settings (tightened in E00-S04 after the Semgrep supply-chain rules flagged them):
+  - `minimumReleaseAge: 10080` refuses any version published less than seven days ago. Hijacked
+    releases are usually found and pulled within days. Because the setting is explicit,
+    pnpm fails on a too-new version instead of quietly adding it to an exclusion list. The cost is
+    that upgrades trail releases by a week; an urgent security fix can be let through with
+    `minimumReleaseAgeExclude` in a reviewed change. Every pinned version was chosen to respect
+    the window, which is why, for example, Turborepo is on 2.11.2.
+  - `trustPolicy: no-downgrade` refuses a version published with weaker trust evidence than
+    earlier releases (for example without provenance after provenance-signed ones), a common
+    sign of a hijacked account. `trustPolicyIgnoreAfter: 43200` limits the check to versions from
+    the last 30 days: many long-lived versions, such as `semver@6` and `undici-types@6`, predate
+    their projects' move to provenance and would otherwise fail.
+  - `blockExoticSubdeps: true` keeps transitive dependencies on the registry (no Git or tarball
+    URLs). It is pnpm's default, stated explicitly so a change is visible in review.
+  - Rust crates have no equivalent release-age setting in Cargo. They are pinned by `Cargo.lock`,
+    checked by `cargo audit` and upgraded through reviewed pull requests.
 - Turborepo 2.11.5 and later write an `AGENTS.md` block when they detect an AI agent. When
   upgrading, set `"agentGuidance": false` in `turbo.json`; agent instructions for this
   repository live in `CLAUDE.md`.
