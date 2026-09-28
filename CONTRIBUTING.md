@@ -57,12 +57,24 @@ Non-negotiable in every change:
   as in code.
 - No secrets, tokens or environment-specific values in source.
 
+## Continuous integration
+
+Every pull request runs the checks in [docs/conventions/ci.md](docs/conventions/ci.md): commit
+and title conventions, formatting, lint, typecheck, tests, builds, browser smoke tests and
+security scans. Desktop and mobile native builds run when those apps change. A failure shows as
+an annotation on the pull request with the reason.
+
 ## Branch protection
 
-Apply these settings to `main` on GitHub (Settings → Branches) once CI lands in E00-S04:
+Protect `main` on GitHub (Settings → Rules or Settings → Branches) with:
 
 - Require a pull request with one approving review, including a code owner.
 - Dismiss stale approvals when new commits are pushed.
-- Require status checks to pass and branches to be up to date before merging.
+- Require these status checks, with branches up to date before merging: **CI / Commit
+  conventions**, **CI / Lint, typecheck, test and build** and **CI / Security scans**.
 - Require linear history (squash merge only) and conversation resolution.
 - Block force pushes and deletions.
+
+GitHub enforces these on private repositories only on paid plans (GitHub Pro, Team or
+Enterprise). On GitHub Free the checks still run and report, but nothing stops a merge while
+they are red, so reviewers must check them by hand.
