@@ -79,7 +79,22 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Lint, typecheck and test
+        id: checks
         run: pnpm exec turbo run lint typecheck test --filter=@worklume/desktop
+
+      # A failed Rust test is repeated as an annotation, so it shows on the pull request without
+      # opening the full log. The tests are already built, so this adds about a minute.
+      - name: Annotate Rust test failures
+        if: failure() && steps.checks.outcome == 'failure'
+        shell: bash
+        run: |
+          cargo test --workspace --locked --no-fail-fast > cargo-test.log 2>&1 || true
+          summary=$(grep -E -A4 '^---- |panicked at' cargo-test.log | head -80 | sed 's/%/%25/g; s/\r//g' | awk '{printf "%s%%0A", $0}')
+          if [ -n "$summary" ]; then
+            echo "::error title=Rust test failures::${summary}"
+          else
+            echo "::error title=Checks failed::No Rust test failed; see the Lint, typecheck and test step."
+          fi
 
       # The OS credential store tests are ignored in ordinary runs because they touch the real
       # keychain. On Linux, GNOME Keyring runs unlocked inside a throwaway D-Bus session.
