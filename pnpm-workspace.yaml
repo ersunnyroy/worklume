@@ -1,0 +1,13 @@
+packages:
+  - 'apps/*'
+  - 'packages/*'
+
+# Fail installs on unsupported Node or pnpm versions instead of warning.
+engineStrict: true
+# Record exact versions; upgrades happen through reviewed dependency PRs.
+saveExact: true
+# Packages may run install scripts only when listed here.
+allowBuilds: {}
+# Refuse versions published less than a day ago (supply-chain buffer). Setting it
+# explicitly makes pnpm fail instead of silently adding exclusions.
+minimumReleaseAge: 1440

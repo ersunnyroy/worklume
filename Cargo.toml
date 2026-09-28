@@ -1,0 +1,32 @@
+# Rust workspace for the desktop agent and its shared crates.
+# Members are added with the first crates in E00-S09 (Tauri scaffold) and
+# E09-S01 (core, sync, storage, platform). Until then the workspace is empty,
+# so `cargo check` at the root reports that there is nothing to build.
+[workspace]
+resolver = "3"
+members = []
+
+[workspace.package]
+edition = "2024"
+rust-version = "1.95"
+license = "UNLICENSED"
+publish = false
+
+[workspace.lints.rust]
+# Unsafe code is limited to the per-OS platform adapters, which opt in
+# explicitly and must document every block (see clippy below).
+unsafe_code = "deny"
+missing_debug_implementations = "warn"
+
+[workspace.lints.clippy]
+all = { level = "deny", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+undocumented_unsafe_blocks = "deny"
+unwrap_used = "deny"
+expect_used = "warn"
+panic = "deny"
+todo = "deny"
+unimplemented = "deny"
+dbg_macro = "deny"
+print_stdout = "deny"
+print_stderr = "deny"

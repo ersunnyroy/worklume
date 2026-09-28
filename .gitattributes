@@ -1,0 +1,16 @@
+* text=auto eol=lf
+
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary
+*.ico binary
+*.icns binary
+*.pdf binary
+*.zip binary
+
+pnpm-lock.yaml linguist-generated=true -diff
+composer.lock linguist-generated=true -diff
+Cargo.lock linguist-generated=true -diff
+docs/planning/** linguist-documentation=true

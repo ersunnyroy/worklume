@@ -1,0 +1,4 @@
+{
+  "extends": "../react-app.json",
+  "include": ["strictness.ts", "dom.ts"]
+}
