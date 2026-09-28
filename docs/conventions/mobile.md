@@ -16,6 +16,10 @@ native folder.
 CI builds the Android APK with Gradle and the iOS simulator app with `xcodebuild` on GitHub's
 runners. Store builds may move to EAS Build in E24; this scaffold needs no Expo account or token.
 
+Expo SDK 57 requires Xcode 26.4 or later, so the iOS job runs on `macos-26`, whose default Xcode
+meets that. On `macos-15` the build failed while resolving Swift packages for ExpoModulesJSI. The
+desktop workflow still uses `macos-15`, which Tauri supports; move it when that image retires.
+
 ## React versions
 
 Expo SDK 57 requires React 19.2.3, while the web app uses React 19.3. pnpm keeps them apart per

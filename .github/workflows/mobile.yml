@@ -84,7 +84,8 @@ jobs:
   ios-simulator:
     name: iOS simulator app
     needs: checks
-    runs-on: macos-15
+    # Expo SDK 57 needs Xcode 26.4 or later, which is the default on macOS 26 runners.
+    runs-on: macos-26
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -95,6 +96,8 @@ jobs:
           node-version-file: .node-version
       - name: Enable pnpm
         run: corepack enable
+      - name: Show the Xcode version
+        run: xcodebuild -version
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
       - name: Generate the iOS project and install pods
@@ -112,8 +115,7 @@ jobs:
             -derivedDataPath build \
             CODE_SIGNING_ALLOWED=NO > xcodebuild.log 2>&1; then
             # Surface the failure as an annotation so it is readable without the raw log.
-            grep -nE "error:|fatal error|BUILD FAILED|Command .* failed|PhaseScriptExecution" xcodebuild.log \
-              | tail -40 > errors.txt || true
+            grep -nE -A3 "error:|fatal error|BUILD FAILED" xcodebuild.log | tail -60 > errors.txt || true
             echo "::error title=xcodebuild failed::$(sed -e 's/%/%25/g' errors.txt | awk '{printf "%s%%0A", $0}')"
             tail -200 xcodebuild.log
             exit 1
