@@ -67,6 +67,14 @@ The desktop workflow uses macOS and Windows runners, whose minutes cost several 
 Linux minutes on a private repository. The workflow therefore runs only when desktop paths change
 (or by hand) and cancels superseded runs.
 
+## Tauri versions
+
+The Tauri CLI comes from npm and falls under the seven-day release-age policy, so it is on
+2.11.5. The `tauri` crate and its internal crates are pinned to the same 2.11 line
+(`tauri ~2.11.5`, `tauri-build ~2.6.3`, locked with `cargo update --precise`). A 2.11 CLI with the
+2.12 crate built, but warned that the CLI sets a build variable the newer crate deprecates. Upgrade
+the CLI and the crates together.
+
 ## Deferred
 
 - Localised tray labels and UI strings: E09-S09 (agent UI).

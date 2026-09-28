@@ -8,6 +8,17 @@ engineStrict: true
 saveExact: true
 # Packages may run install scripts only when listed here.
 allowBuilds: {}
-# Refuse versions published less than a day ago (supply-chain buffer). Setting it
-# explicitly makes pnpm fail instead of silently adding exclusions.
-minimumReleaseAge: 1440
+# Refuse versions published less than seven days ago, so compromised releases are usually
+# caught and pulled before they reach us. Setting it explicitly makes pnpm fail instead of
+# silently adding exclusions. An urgent security fix can be allowed through
+# minimumReleaseAgeExclude in a reviewed change.
+minimumReleaseAge: 10080
+# Refuse a version whose publishing is less trusted than earlier ones (for example, published
+# without provenance after releases that had it), a common sign of a hijacked account. Only
+# versions from the last 30 days are checked: older ones predate any takeover that is still
+# undiscovered, and many long-lived versions (semver 6, undici-types 6) were published before
+# their projects adopted provenance. A recent legitimate exception goes in trustPolicyExclude.
+trustPolicy: no-downgrade
+trustPolicyIgnoreAfter: 43200
+# Transitive dependencies may come only from the registry, never from Git URLs or tarballs.
+blockExoticSubdeps: true
