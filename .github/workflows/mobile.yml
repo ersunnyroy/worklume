@@ -102,15 +102,23 @@ jobs:
         run: pnpm exec expo prebuild --platform ios
       - name: Build for the iOS simulator (unsigned)
         working-directory: apps/mobile/ios
-        run: >-
-          xcodebuild build
-          -workspace Worklume.xcworkspace
-          -scheme Worklume
-          -configuration Release
-          -sdk iphonesimulator
-          -destination 'generic/platform=iOS Simulator'
-          -derivedDataPath build
-          CODE_SIGNING_ALLOWED=NO
+        run: |
+          if ! xcodebuild build \
+            -workspace Worklume.xcworkspace \
+            -scheme Worklume \
+            -configuration Release \
+            -sdk iphonesimulator \
+            -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO > xcodebuild.log 2>&1; then
+            # Surface the failure as an annotation so it is readable without the raw log.
+            grep -nE "error:|fatal error|BUILD FAILED|Command .* failed|PhaseScriptExecution" xcodebuild.log \
+              | tail -40 > errors.txt || true
+            echo "::error title=xcodebuild failed::$(sed -e 's/%/%25/g' errors.txt | awk '{printf "%s%%0A", $0}')"
+            tail -200 xcodebuild.log
+            exit 1
+          fi
+          tail -20 xcodebuild.log
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: worklume-mobile-ios-simulator
