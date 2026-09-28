@@ -1,0 +1,8 @@
+{
+  "extends": "@worklume/tsconfig/react-app.json",
+  "compilerOptions": {
+    "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.app.tsbuildinfo",
+    "types": ["vite/client", "@testing-library/jest-dom/vitest"]
+  },
+  "include": ["frontend/src"]
+}

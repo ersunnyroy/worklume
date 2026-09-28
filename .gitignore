@@ -32,3 +32,6 @@ Thumbs.db
 playwright-report/
 test-results/
 blob-report/
+
+# Tauri writes capability schemas here during builds
+apps/desktop/src-tauri/gen/
