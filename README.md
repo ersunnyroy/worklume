@@ -11,7 +11,7 @@ share.
 | `apps/api`               | Laravel API, modular monolith (`app/Domains/*`)                                 | E00-S02    |
 | `apps/web`               | React web app (Vite, TanStack Router and Query); see its README                 | E00-S08    |
 | `apps/desktop`           | Tauri 2 desktop agent: Rust core with per-OS adapters, React UI; see its README | E00-S09    |
-| `apps/mobile`            | Expo (React Native) app                                                         | E00-S09    |
+| `apps/mobile`            | Expo (React Native) app; see its README                                         | E00-S09    |
 | `packages/tsconfig`      | Shared TypeScript settings                                                      | E00-S01    |
 | `packages/eslint-config` | Shared ESLint flat configs (`base`, `react`)                                    | E00-S01    |
 | `docs/planning`          | Research, architecture and implementation plan (source of truth)                | —          |

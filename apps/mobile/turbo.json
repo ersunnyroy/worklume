@@ -1,0 +1,10 @@
+{
+  "$schema": "https://turborepo.com/schema.json",
+  "extends": ["//"],
+  "tasks": {
+    "build": {
+      "outputs": ["dist/**"],
+      "passThroughEnv": ["EXPO_OFFLINE", "EXPO_NO_TELEMETRY"]
+    }
+  }
+}
