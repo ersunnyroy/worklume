@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "main-window",
-  "description": "The main window may call nothing yet. E09-S01 adds typed commands to this allowlist one by one.",
+  "description": "The IPC allowlist for the main window. Each command added in src/ipc.rs and build.rs needs its allow-<command> permission here; nothing else is callable.",
   "windows": ["main"],
-  "permissions": []
+  "permissions": ["allow-agent-status"]
 }

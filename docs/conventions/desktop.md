@@ -7,9 +7,45 @@ per-OS adapters) is fixed by ADR-006.
 
 The shell crate lives in `apps/desktop/src-tauri` (Tauri's convention, which its CLI and docs
 assume) and the webview UI in `apps/desktop/frontend`, matching the architecture's `frontend/`.
-The domain crates from the architecture (`core`, `sync`, `storage`, `platform`) join as siblings
-of `src-tauri` in E09-S01. All crates are members of the root Cargo workspace and share its
-lints and release profile.
+The architecture's domain crates are siblings: `core`, `sync`, `storage` and `platform`
+(E09-S01). All crates are members of the root Cargo workspace and share its lints and release
+profile.
+
+## Crate boundaries
+
+`scripts/crate-boundaries.mjs` holds the rules and `pnpm lint` checks them against
+`cargo metadata`:
+
+- Workspace layering: `platform` depends on nothing of ours; `storage` on `platform`; `core` on
+  `platform` and `storage`; `sync` on those and `core`; the shell on all of them. A new crate
+  fails the check until it gets a rule.
+- Only the shell may use Tauri or Specta, so the domain crates know nothing about the webview.
+- Only `platform` may use OS API crates (objc2, windows, x11rb, zbus, ashpd and similar).
+- Only `sync` may use HTTP clients.
+
+Dev-dependencies are exempt, so tests can use Tauri's mock runtime. This is the desktop
+counterpart of the API's module-boundary tests.
+
+## Typed IPC and the allowlist
+
+- Commands are declared once in Rust. `tauri-specta` generates `frontend/src/ipc/bindings.gen.ts`
+  from them; `tests/bindings.rs` fails when the committed file is stale.
+- Listing commands in the app manifest (`build.rs`) puts app commands under Tauri's ACL, and
+  `capabilities/main.json` grants the main window only `allow-agent-status`. The allowlist test
+  checks that refused calls fail with the ACL's "not allowed" error, not merely any error: with
+  `core:default` granted, several core commands get past the ACL and fail later on missing
+  arguments, which a looser test would miss.
+- `tauri-specta` and `specta` are still release candidates. They are pinned with `=` as their
+  authors require; upgrade them together and regenerate the bindings.
+- IPC types live in the shell (`src-tauri/src/ipc.rs`) and map from domain types, so the domain
+  crates stay independent of the transport.
+
+## Single instance
+
+`tauri-plugin-single-instance` is the first plugin registered. A second launch hands over to the
+running agent, which shows its window, and exits. A headless check on Linux showed the second
+process exiting at once while the first kept running. The plugin stays on 2.4.x because 2.5
+requires Tauri 2.12.
 
 ## Rust tasks in Turborepo
 
@@ -80,5 +116,4 @@ the CLI and the crates together.
 - Localised tray labels and UI strings: E09-S09 (agent UI).
 - Logging of best-effort failures (hiding or focusing a window): E09-S11.
 - A monochrome template tray icon for the macOS menu bar: E10-S07.
-- Single-instance enforcement: E09-S01.
 - Code signing, notarisation and the updater: E09-S10 and E10–E13.

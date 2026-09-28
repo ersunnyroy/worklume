@@ -23,9 +23,18 @@ test = false
 tauri-build = { version = "~2.6.3", features = [] }
 
 [dependencies]
+serde = { version = "1", features = ["derive"] }
+specta = { version = "=2.0.0-rc.25", features = ["derive"] }
+specta-typescript = "=0.0.12"
 tauri = { version = "~2.11.5", features = ["tray-icon"] }
+# 2.5 requires tauri 2.12; stay on the plugin line that matches the pinned tauri 2.11.
+tauri-plugin-single-instance = "~2.4.5"
+tauri-specta = { version = "=2.0.0-rc.25", features = ["derive", "typescript"] }
+worklume-core = { path = "../core" }
+worklume-platform = { path = "../platform" }
 
 [dev-dependencies]
+serde_json = "1"
 tauri = { version = "~2.11.5", features = ["tray-icon", "test"] }
 
 [lints]

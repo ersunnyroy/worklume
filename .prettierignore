@@ -17,3 +17,4 @@ apps/mobile/.expo
 apps/mobile/android
 apps/mobile/ios
 packages/api-client/src/schema.gen.ts
+apps/desktop/frontend/src/ipc/bindings.gen.ts

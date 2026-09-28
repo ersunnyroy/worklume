@@ -1,0 +1,15 @@
+[package]
+name = "worklume-sync"
+description = "Worklume desktop agent: drains the outbox to the API in ordered, idempotent batches."
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+worklume-core = { path = "../core" }
+worklume-storage = { path = "../storage" }
+
+[lints]
+workspace = true

@@ -1,25 +1,37 @@
 # @worklume/desktop
 
 The Worklume desktop agent: a Tauri 2 app that lives in the menu bar (macOS) or system tray
-(Windows, Linux). Right now it is a scaffold: a tray icon with **Open Worklume** and **Quit
-Worklume**, and a window that starts hidden and hides again when closed. Tracking, storage and
-sync arrive in epic E09.
+(Windows, Linux). Right now it is a shell: a tray icon with **Open Worklume** and **Quit
+Worklume**, a window that starts hidden and hides again when closed, a single running instance,
+and one typed command (`agent_status`) behind an IPC allowlist. Tracking, storage and sync
+arrive in the rest of epic E09.
 
 ## Layout
 
-| Path                           | Holds                                                              |
-| ------------------------------ | ------------------------------------------------------------------ |
-| `frontend/`                    | React UI rendered in the webview (Vite root)                       |
-| `src-tauri/`                   | The Tauri shell crate `worklume-desktop`, a Cargo workspace member |
-| `src-tauri/src/tray.rs`        | Tray icon and menu                                                 |
-| `src-tauri/src/window.rs`      | Window behaviour: close hides, "Open" restores                     |
-| `src-tauri/capabilities/`      | IPC allowlist for the webview (empty for now)                      |
-| `src-tauri/tests/`             | Rust integration tests, including Tauri mock-runtime tests         |
-| `src-tauri/tauri.conf.json`    | App identity, window, CSP and bundle settings                      |
-| `src-tauri/icons/`, `icon.svg` | App icons, generated from `icon.svg`                               |
+| Path                               | Holds                                                                  |
+| ---------------------------------- | ---------------------------------------------------------------------- |
+| `frontend/`                        | React UI rendered in the webview (Vite root)                           |
+| `frontend/src/ipc/bindings.gen.ts` | Typed command bindings, generated from `src-tauri/src/ipc.rs`          |
+| `src-tauri/`                       | The Tauri shell crate `worklume-desktop`: tray, window, IPC, lifecycle |
+| `src-tauri/capabilities/`          | IPC allowlist for the main window                                      |
+| `src-tauri/tests/`                 | Integration tests, including Tauri mock-runtime and allowlist tests    |
+| `core/`                            | `worklume-core`: tracker, slots, screenshots, idle, policy (E09-S04+)  |
+| `storage/`                         | `worklume-storage`: encrypted local store (E09-S02)                    |
+| `sync/`                            | `worklume-sync`: outbox drain and uploads (E09-S05)                    |
+| `platform/`                        | `worklume-platform`: OS integration behind traits; platform detection  |
+| `scripts/`                         | Crate dependency rules, checked on every lint                          |
+| `src-tauri/icons/`, `icon.svg`     | App icons, generated from `icon.svg`                                   |
 
-E09-S01 adds the `core`, `sync`, `storage` and `platform` crates next to `src-tauri/`, as the
-architecture's desktop layout describes.
+## Adding a command the UI can call
+
+1. Write the command in `src-tauri/src/ipc.rs` with `#[tauri::command]` and `#[specta::specta]`,
+   and add it to `builder()`.
+2. List its name in the app manifest in `src-tauri/build.rs`.
+3. Grant `allow-<command-name>` in `src-tauri/capabilities/main.json`.
+4. Regenerate the bindings: `UPDATE_BINDINGS=1 cargo test -p worklume-desktop --test bindings`.
+5. Call it from the UI through `commands` in `frontend/src/ipc/bindings.gen.ts`.
+
+A command missing from step 2 or 3 is refused by Tauri's ACL; stale bindings fail the tests.
 
 ## Prerequisites
 
@@ -37,8 +49,8 @@ Node and pnpm as for the rest of the repo, plus Rust (installed automatically fr
 | `pnpm --filter @worklume/desktop dev`       | Run the app with the UI hot-reloading                   |
 | `pnpm --filter @worklume/desktop build`     | Build the UI into `dist/` (the shell embeds it)         |
 | `pnpm --filter @worklume/desktop build:app` | Build unsigned installers into `target/release/bundle/` |
-| `pnpm --filter @worklume/desktop lint`      | ESLint, `cargo fmt --check` and Clippy                  |
-| `pnpm --filter @worklume/desktop test`      | Vitest for the UI and `cargo test` for the shell        |
+| `pnpm --filter @worklume/desktop lint`      | ESLint, crate boundaries, `cargo fmt --check`, Clippy   |
+| `pnpm --filter @worklume/desktop test`      | Vitest, script tests and `cargo test` for all crates    |
 
 Lint and test build the UI first, because the Rust crate embeds `dist/` at compile time.
 

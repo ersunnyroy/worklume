@@ -1,8 +1,15 @@
 # Rust workspace for the desktop agent and its shared crates.
-# The Tauri shell arrived in E00-S09; E09-S01 adds core, sync, storage and platform.
+# The Tauri shell arrived in E00-S09; E09-S01 added core, sync, storage and platform.
+# Allowed dependencies between them are checked by apps/desktop/scripts/check-crate-boundaries.mjs.
 [workspace]
 resolver = "3"
-members = ["apps/desktop/src-tauri"]
+members = [
+  "apps/desktop/src-tauri",
+  "apps/desktop/core",
+  "apps/desktop/platform",
+  "apps/desktop/storage",
+  "apps/desktop/sync",
+]
 
 [workspace.package]
 edition = "2024"
