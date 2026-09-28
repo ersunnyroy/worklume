@@ -5964,8 +5964,10 @@ dependencies = [
  "apple-native-keyring-store",
  "dbus-secret-service-keyring-store",
  "keyring-core",
+ "libc",
  "thiserror 2.0.21",
  "windows-native-keyring-store",
+ "windows-sys 0.61.2",
  "zeroize",
 ]
 

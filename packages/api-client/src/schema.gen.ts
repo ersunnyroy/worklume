@@ -203,7 +203,7 @@ export interface components {
              */
             trigger: "user" | "switch" | "resume" | "break_end" | "gap_end" | "restart";
         };
-        /** @description Closes the open time entry `time_entry_id` at the event's time and stops the member's timer. Every reason except `user` and `switch` is a stop the member did not ask for, and is usually followed by a `timer.started` (trigger `resume`, `break_end`, `gap_end` or `restart`). Stopping while paused sends nothing, because the timer is already stopped. */
+        /** @description Closes the open time entry `time_entry_id` at the event's time and stops the member's timer. Every reason except `user` and `switch` is a stop the member did not ask for, and is usually followed by a `timer.started` (trigger `resume`, `break_end`, `gap_end` or `restart`). Stopping while paused sends nothing, because the timer is already stopped. For `sleep`, the event's time is the agent's last reading before the device slept; after a sleep longer than the idle timeout, the timer resumes only when the member says so. */
         TimerStoppedEvent: components["schemas"]["DesktopEventEnvelope"] & {
             /** @constant */
             type: "timer.stopped";
@@ -240,7 +240,7 @@ export interface components {
              */
             time_entry_id: string;
         };
-        /** @description The member's decision, applied by the server as `POST /v1/idle-periods/{id}/resolve` would: `keep` counts the idle time; `discard` removes it from the entries; `reassign` moves it to `reassigned_project_id`; `stop` removes it and stops the timer where idle began. The idle period ends at the event's time. The agent sends no other event for a resolution. */
+        /** @description The decision about an idle period, applied by the server as `POST /v1/idle-periods/{id}/resolve` would: `keep` counts the idle time; `discard` removes it from the entries; `reassign` moves it to `reassigned_project_id`; `stop` removes it and stops the timer where idle began. The idle period ends at the event's time, or where its entry ended if that came first: the device slept while the decision was pending, and the entry's `timer.stopped` (reason `sleep`) came before this event. The agent sends no other event for a resolution. `decided_by: policy` marks a decision the organization's keep-idle policy made without asking (`always` sends `keep`, `never` sends `stop`); the server records it as `auto_kept` or `auto_discarded`. The server checks every decision against the member's effective keep-idle policy and applies the policy's outcome where they differ, so an agent cannot keep idle time under `never`. */
         IdleResolvedEvent: components["schemas"]["DesktopEventEnvelope"] & {
             /** @constant */
             type: "idle.resolved";
@@ -264,6 +264,8 @@ export interface components {
              * @description Set only for `reassign`.
              */
             reassigned_project_id: string | null;
+            /** @enum {string} */
+            decided_by: "member" | "policy";
         };
         /** @description Starts a work break, whose ID is the event ID. A running timer is closed by a `timer.stopped` with reason `break` just before. */
         BreakStartedEvent: components["schemas"]["DesktopEventEnvelope"] & {
