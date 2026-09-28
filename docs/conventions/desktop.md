@@ -223,6 +223,83 @@ E09-S11. The code is in `src-tauri/src/watchdog.rs`, `src-tauri/src/diagnostics/
   `POST /v1/desktop/logs/upload-url`. The server asks for the bundle with an `upload_logs`
   command; the bundle is the files described above, capped at 20 MB.
 
+## Tracker
+
+E09-S04: `worklume-core::tracker`, a state machine the agent's loop will drive. The loop, which
+ticks every second, and the one-store-per-organization setup arrive with sign-in (E09-S03) and
+the agent UI (E09-S09). Until then the tracker runs in tests against a controllable clock.
+
+**States.** Stopped, running, idle-pending, paused and on-break.
+
+- `start`, `switch` and `stop` are the member's timer controls.
+- `idle_detected` and `resolve_idle` (keep, discard, reassign or stop) record idle time.
+- `pause` and `resume` handle sleep or a locked session, and are safe to repeat because power
+  events arrive more than once.
+- `start_break` and `end_break` handle breaks.
+- `tick(now, activity)` accounts time.
+- Refused actions change nothing and write nothing. `tests/transitions.rs` holds the full table.
+- Idle detection, the idle dialog, sleep and wake, and the real OS clock are E09-S08. Here they
+  are inputs.
+
+**Journal first.**
+
+- Each call works on a copy of the tracker. The copy's snapshot and the events it produced are
+  saved in one store transaction, and only then does the copy go live.
+- A failed save changes nothing: the next tick accounts the same time again, and slot IDs are
+  kept, so a retry never duplicates a slot.
+- The journal holds a single snapshot. While time counts, a new one is written at least every
+  30 seconds (the heartbeat), which bounds what a crash can lose.
+
+**Time.**
+
+- Durations come only from the monotonic clock.
+- Wall time is derived from one anchor per boot: `anchor.wall + (now.mono − anchor.mono)`. Slot
+  windows and event times use it, so changing the system clock neither adds nor removes time;
+  it only flags the slot `clock_adjusted` (more than 60 seconds apart).
+- The server corrects the anchor's offset with the clock offset the sync engine measures
+  (E09-S05).
+
+**Gaps and restarts.**
+
+- If no tick arrives for over a minute while time counts, the gap isn't counted: the entry
+  closes where ticks stopped (`timer.stopped`, reason `gap`) and a new one opens
+  (`timer.started`, trigger `gap_end`).
+- On restart, `Tracker::open` restores the snapshot. If time was counting, the entry closes at
+  the snapshot (reason `agent_restart`), a new one opens (trigger `restart`) and the timer
+  carries on. `Recovery` reports the unaccounted time.
+- After a reboot, slots from the old boot close at once and are dated in that boot.
+
+**Slots.**
+
+- 10-minute UTC windows, at most one per window, matching the server's unique key.
+- A slot closes only once its window has passed, so stopping and restarting within a window adds
+  to the same slot.
+- Each slot holds tracked, active, keyboard, mouse and idle seconds. Idle counts from detection,
+  and activity is clamped to tracked time.
+- It is attributed to the entry with the most time in it (the later entry on a tie).
+- It is flagged `partial_slot` when not fully tracked; slots under one whole second aren't sent.
+- Seconds are rounded on running totals, not per slot, so a day's slots add up to the tracked
+  time within one second. That is the acceptance criterion, checked by
+  `tests/simulation.rs`: two seeded 24-hour runs with jitter, missed ticks, random actions,
+  clock changes and three crashes.
+
+**Events and the server.**
+
+- The event vocabulary is the contract's `DesktopEvent` schema (`POST /v1/desktop/sync`).
+  `docs/conventions/api-contract.md` explains how the agent and the contract are kept in step.
+- Every `timer.stopped` stops the server's timer, and every `timer.started` starts it, so a
+  paused member shows as not tracking, and stopping while paused sends nothing.
+- Idle resolutions are applied by the server, as `POST /v1/idle-periods/{id}/resolve` would, so
+  a resolution made on the web cannot double-count.
+- The server's `timers.stop_reason` needs the agent's reasons: `sleep`, `session_locked`,
+  `break`, `gap` and `agent_restart` (E07-S03, E08-S10).
+
+**Test support.**
+
+- `worklume-platform`'s `fake` feature provides `MemorySecretStore`.
+- `worklume-storage`'s `fault-injection` feature adds `Store::fail_next_writes`.
+- Both are dev-dependency features only; the app never enables them.
+
 ## Rust tasks in Turborepo
 
 The desktop `package.json` wraps Cargo: `lint` runs ESLint, `cargo fmt --check` and Clippy with
@@ -290,9 +367,9 @@ the CLI and the crates together.
 ## Deferred
 
 - Localised tray labels and UI strings: E09-S09 (agent UI).
-- Logging of best-effort failures (hiding or focusing a window): with the tracker (E09-S04), now
-  that logging exists.
-- Opening the store at startup, off the main thread, and showing its state: E09-S04.
+- Running the tracker in the app: a loop that ticks every second, one store per organization
+  and device registration opened off the main thread, and logging of best-effort window
+  failures. This arrives after sign-in (E09-S03) with the agent UI (E09-S09).
 - A monochrome template tray icon for the macOS menu bar: E10-S07.
 - Code signing, notarisation and the updater: E09-S10 and E10–E13. The updater restarts the
   agent through exit code 75, so the watchdog stays in charge.

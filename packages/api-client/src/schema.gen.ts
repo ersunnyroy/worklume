@@ -47,6 +47,38 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/desktop/sync": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Upload a batch of outbox events
+         * @description The agent sends its outbox in `seq` order, up to 500 events or 5 MB per batch, and
+         *     deletes events only once they are acknowledged (`accepted` or `duplicate`). The server
+         *     applies events in `seq` order inside one transaction per member and answers per event.
+         *
+         *     Retries are safe twice over: the server replays its stored response for a `batch_id` it
+         *     has seen, and inserts use each `event_id` as the key, so a repeated event is reported as
+         *     `duplicate`.
+         *
+         *     Every ID in an event comes from the device, so the server checks each one: projects and
+         *     tasks must be assigned to the member, and time entries, idle periods and breaks must
+         *     belong to this device. The organization always comes from the token.
+         *
+         *     The server's obligations for each event type are in the event schemas' descriptions.
+         */
+        post: operations["syncDesktopEvents"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -83,6 +115,222 @@ export interface components {
             field: string;
             code: string;
             message: string;
+        };
+        DesktopSyncBatch: {
+            /**
+             * Format: uuid
+             * @description Chosen by the agent and kept for every retry of this batch.
+             */
+            batch_id: string;
+            first_seq: number;
+            last_seq: number;
+            events: components["schemas"]["DesktopEvent"][];
+        };
+        DesktopSyncResult: {
+            /** @description The highest contiguous `seq` the server has applied for this device. */
+            applied_seq: number;
+            results: components["schemas"]["DesktopEventResult"][];
+            /** @description Commands waiting for this device. */
+            commands: components["schemas"]["DeviceCommand"][];
+        };
+        DesktopEventResult: {
+            /** Format: uuid */
+            event_id: string;
+            /** @enum {string} */
+            status: "accepted" | "duplicate" | "conflict" | "rejected";
+            /** @description Why, for `conflict` and `rejected`: `time_locked`, `limit_reached`, `project_unavailable`, `overlap_trimmed` or `clock_adjusted`. */
+            code?: string;
+            details?: Record<string, never>;
+        };
+        DeviceCommand: {
+            /** Format: uuid */
+            id: string;
+            /** @enum {string} */
+            command: "refresh_config" | "force_sync" | "upload_logs" | "stop_timer" | "sign_out";
+            payload: Record<string, never>;
+        };
+        /**
+         * @description One outbox event. The envelope is the same for every type (architecture §13); `type`
+         *     decides the payload. The envelope time is the moment the change took effect, which is not
+         *     always when it was recorded: `idle.detected` is dated when idle began, a restart's
+         *     `timer.stopped` at the agent's last snapshot, and `slot.closed` at the end of its window.
+         */
+        DesktopEvent: components["schemas"]["TimerStartedEvent"] | components["schemas"]["TimerStoppedEvent"] | components["schemas"]["IdleDetectedEvent"] | components["schemas"]["IdleResolvedEvent"] | components["schemas"]["BreakStartedEvent"] | components["schemas"]["BreakEndedEvent"] | components["schemas"]["SlotClosedEvent"];
+        DesktopEventEnvelope: {
+            /**
+             * Format: uuid
+             * @description UUIDv7 made on the device. For events that create a row (a time entry, idle period, break or slot), it becomes that row's ID.
+             */
+            event_id: string;
+            /** @description Position in this device's outbox sequence; never reused. */
+            seq: number;
+            type: string;
+            /**
+             * Format: date-time
+             * @description The device's time for the change, derived from monotonic time since the boot's first reading, so changing the system clock does not move it.
+             */
+            wall_time: string;
+            mono_time: components["schemas"]["DesktopMonotonicTime"];
+            /** @description The last measured device-minus-server offset; null until the first sync. */
+            clock_offset_ms: number | null;
+            payload: Record<string, never>;
+        };
+        DesktopMonotonicTime: {
+            ms: number;
+            /** @description Monotonic readings compare only within one boot. */
+            boot_id: string;
+        };
+        /** @description Opens a time entry, whose ID is the event ID, and starts the member's timer. The agent never opens an entry while another of its entries is open; conflicts with other devices follow architecture §13 (the earlier start wins). */
+        TimerStartedEvent: components["schemas"]["DesktopEventEnvelope"] & {
+            /** @constant */
+            type: "timer.started";
+            payload: components["schemas"]["TimerStartedPayload"];
+        } & {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "timer.started";
+        };
+        TimerStartedPayload: {
+            /** Format: uuid */
+            project_id: string;
+            /** Format: uuid */
+            task_id: string | null;
+            /**
+             * @description `resume` after a pause, `break_end` after a break, `gap_end` after ticks stopped for over a minute, `restart` after the agent restarted.
+             * @enum {string}
+             */
+            trigger: "user" | "switch" | "resume" | "break_end" | "gap_end" | "restart";
+        };
+        /** @description Closes the open time entry `time_entry_id` at the event's time and stops the member's timer. Every reason except `user` and `switch` is a stop the member did not ask for, and is usually followed by a `timer.started` (trigger `resume`, `break_end`, `gap_end` or `restart`). Stopping while paused sends nothing, because the timer is already stopped. */
+        TimerStoppedEvent: components["schemas"]["DesktopEventEnvelope"] & {
+            /** @constant */
+            type: "timer.stopped";
+            payload: components["schemas"]["TimerStoppedPayload"];
+        } & {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "timer.stopped";
+        };
+        TimerStoppedPayload: {
+            /** Format: uuid */
+            time_entry_id: string;
+            /** @enum {string} */
+            reason: "user" | "switch" | "sleep" | "session_locked" | "break" | "gap" | "agent_restart";
+        };
+        /** @description Opens a pending idle period, whose ID is the event ID, starting at the event's time. */
+        IdleDetectedEvent: components["schemas"]["DesktopEventEnvelope"] & {
+            /** @constant */
+            type: "idle.detected";
+            payload: components["schemas"]["IdleDetectedPayload"];
+        } & {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "idle.detected";
+        };
+        IdleDetectedPayload: {
+            /**
+             * Format: uuid
+             * @description The entry that was running when idle began.
+             */
+            time_entry_id: string;
+        };
+        /** @description The member's decision, applied by the server as `POST /v1/idle-periods/{id}/resolve` would: `keep` counts the idle time; `discard` removes it from the entries; `reassign` moves it to `reassigned_project_id`; `stop` removes it and stops the timer where idle began. The idle period ends at the event's time. The agent sends no other event for a resolution. */
+        IdleResolvedEvent: components["schemas"]["DesktopEventEnvelope"] & {
+            /** @constant */
+            type: "idle.resolved";
+            payload: components["schemas"]["IdleResolvedPayload"];
+        } & {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "idle.resolved";
+        };
+        IdleResolvedPayload: {
+            /** Format: uuid */
+            idle_period_id: string;
+            /** Format: uuid */
+            time_entry_id: string;
+            /** @enum {string} */
+            resolution: "keep" | "discard" | "reassign" | "stop";
+            /**
+             * Format: uuid
+             * @description Set only for `reassign`.
+             */
+            reassigned_project_id: string | null;
+        };
+        /** @description Starts a work break, whose ID is the event ID. A running timer is closed by a `timer.stopped` with reason `break` just before. */
+        BreakStartedEvent: components["schemas"]["DesktopEventEnvelope"] & {
+            /** @constant */
+            type: "break.started";
+            payload: components["schemas"]["BreakStartedPayload"];
+        } & {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "break.started";
+        };
+        BreakStartedPayload: {
+            /** Format: uuid */
+            break_policy_id: string;
+        };
+        /** @description Ends the break `break_id`. A timer resumed after it follows as `timer.started`. */
+        BreakEndedEvent: components["schemas"]["DesktopEventEnvelope"] & {
+            /** @constant */
+            type: "break.ended";
+            payload: components["schemas"]["BreakEndedPayload"];
+        } & {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "break.ended";
+        };
+        BreakEndedPayload: {
+            /** Format: uuid */
+            break_id: string;
+        };
+        /** @description One 10-minute activity slot, whose ID is the event ID, dated at the end of its window. There is at most one per device and window. It belongs to the entry with the most time in it; time entries remain the source of truth for tracked time. */
+        SlotClosedEvent: components["schemas"]["DesktopEventEnvelope"] & {
+            /** @constant */
+            type: "slot.closed";
+            payload: components["schemas"]["SlotClosedPayload"];
+        } & {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "slot.closed";
+        };
+        SlotClosedPayload: {
+            /**
+             * Format: date-time
+             * @description The window's start, aligned to :00, :10, :20… UTC.
+             */
+            slot_start: string;
+            /** Format: uuid */
+            time_entry_id: string;
+            /** Format: uuid */
+            project_id: string;
+            /** Format: uuid */
+            task_id: string | null;
+            tracked_seconds: number;
+            /** @description Seconds with any input; never more than tracked. */
+            active_seconds: number;
+            /** @description Null when the OS gives no keyboard and mouse split (Wayland). */
+            keyboard_seconds: number | null;
+            mouse_seconds: number | null;
+            idle_seconds: number;
+            /** @enum {string} */
+            input_method: "hooks" | "idle_poll" | "portal";
+            flags: ("partial_slot" | "clock_adjusted")[];
         };
     };
     responses: {
@@ -174,6 +422,33 @@ export interface operations {
                     "application/problem+json": components["schemas"]["Problem"];
                 };
             };
+            default: components["responses"]["Problem"];
+        };
+    };
+    syncDesktopEvents: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DesktopSyncBatch"];
+            };
+        };
+        responses: {
+            /** @description The batch was processed; each event has a verdict. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DesktopSyncResult"];
+                };
+            };
+            413: components["responses"]["Problem"];
+            422: components["responses"]["Problem"];
             default: components["responses"]["Problem"];
         };
     };

@@ -10,6 +10,8 @@
 //! keeps secrets in the OS credential store.
 
 mod detect;
+#[cfg(feature = "fake")]
+pub mod fake;
 mod secret;
 
 pub use detect::{LinuxSession, OperatingSystem, PlatformInfo, linux_session_from_env};

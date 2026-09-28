@@ -5923,6 +5923,11 @@ checksum = "1ebf944e87a7c253233ad6766e082e3cd714b5d03812acc24c318f549614536e"
 name = "worklume-core"
 version = "0.1.0"
 dependencies = [
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.21",
+ "uuid",
  "worklume-platform",
  "worklume-storage",
 ]
@@ -5985,8 +5990,12 @@ dependencies = [
 name = "worklume-sync"
 version = "0.1.0"
 dependencies = [
+ "serde_json",
+ "tempfile",
  "ureq",
+ "uuid",
  "worklume-core",
+ "worklume-platform",
  "worklume-storage",
 ]
 
