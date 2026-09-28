@@ -82,18 +82,21 @@ jobs:
         id: checks
         run: pnpm exec turbo run lint typecheck test --filter=@worklume/desktop
 
-      # A failed Rust test is repeated as an annotation, so it shows on the pull request without
-      # opening the full log. The tests are already built, so this adds about a minute.
-      - name: Annotate Rust test failures
+      # Clippy errors and failed Rust tests are repeated as one annotation, so they show on the
+      # pull request without opening the full log. Everything is already built, so this adds
+      # about a minute. (The Actions bash shell sets pipefail; grep finding nothing is fine here.)
+      - name: Annotate Rust failures
         if: failure() && steps.checks.outcome == 'failure'
         shell: bash
         run: |
+          cargo clippy --workspace --all-targets --locked --message-format=short -- -D warnings > clippy.log 2>&1 || true
           cargo test --workspace --locked --no-fail-fast > cargo-test.log 2>&1 || true
-          summary=$(grep -E -A4 '^---- |panicked at' cargo-test.log | head -80 | sed 's/%/%25/g; s/\r//g' | awk '{printf "%s%%0A", $0}')
+          { grep -E '^[^ ].*: (error|warning)' clippy.log || true; grep -E -A4 '^---- |panicked at' cargo-test.log || true; } > rust-failures.log
+          summary=$(head -80 rust-failures.log | sed 's/%/%25/g; s/\r//g' | awk '{printf "%s%%0A", $0}')
           if [ -n "$summary" ]; then
-            echo "::error title=Rust test failures::${summary}"
+            echo "::error title=Rust failures::${summary}"
           else
-            echo "::error title=Checks failed::No Rust test failed; see the Lint, typecheck and test step."
+            echo "::error title=Checks failed::No Clippy error or Rust test failure; see the Lint, typecheck and test step."
           fi
 
       # The OS credential store tests are ignored in ordinary runs because they touch the real
