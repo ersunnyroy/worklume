@@ -192,19 +192,22 @@ fn create_private(path: &Path) -> io::Result<File> {
     options.open(path)
 }
 
-/// Flushes a directory's entries, so a new file's name survives a power cut. On Unix this is an
-/// `fsync` of the directory. Windows offers no directory handle through the standard library;
-/// NTFS journals the entry, and the reconcile on open covers the rest.
+/// Flushes a directory's entries, so a new file's name survives a power cut: an `fsync` of the
+/// directory.
+#[cfg(unix)]
 pub(crate) fn sync_dir(dir: &Path) -> io::Result<()> {
-    #[cfg(unix)]
-    {
-        File::open(dir)?.sync_all()
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = dir;
-        Ok(())
-    }
+    File::open(dir)?.sync_all()
+}
+
+/// Windows offers no directory handle through the standard library. NTFS journals the new entry,
+/// and the reconcile on open deletes any file whose row never committed.
+#[cfg(not(unix))]
+#[allow(
+    clippy::unnecessary_wraps,
+    reason = "keeps the signature of the Unix version, which can fail"
+)]
+pub(crate) fn sync_dir(_dir: &Path) -> io::Result<()> {
+    Ok(())
 }
 
 #[cfg(test)]
