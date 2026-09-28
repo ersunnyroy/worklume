@@ -22,9 +22,14 @@ export const restrictedCrates = [
   },
   {
     pattern:
-      /^(objc2(-.+)?|block2|core-foundation|core-graphics|windows|windows-sys|x11rb|xcb|zbus|ashpd|atspi|wayland-client)$/,
+      /^(objc2(-.+)?|block2|core-foundation|core-graphics|windows|windows-sys|x11rb|xcb|zbus|ashpd|atspi|wayland-client|security-framework(-sys)?|dbus(-.+)?|secret-service|keyring|keyring-core|.+-keyring-store)$/,
     allowedIn: ['worklume-platform'],
     reason: 'operating-system APIs belong in the platform adapters',
+  },
+  {
+    pattern: /^(rusqlite|libsqlite3-sys|sqlx|diesel|sea-orm)$/,
+    allowedIn: ['worklume-storage'],
+    reason: 'the local database belongs to storage',
   },
   {
     pattern: /^(reqwest|hyper|hyper-util|ureq|isahc|surf)$/,

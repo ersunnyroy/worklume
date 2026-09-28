@@ -43,6 +43,33 @@ describe('checkBoundaries', () => {
     assert.match(violations.join('\n'), /operating-system APIs/);
   });
 
+  it('keeps the OS credential store in the platform crate', () => {
+    assert.deepEqual(
+      checkBoundaries(
+        workspace(crate('worklume-platform', [['keyring-core'], ['apple-native-keyring-store']])),
+      ),
+      [],
+    );
+    const violations = checkBoundaries(
+      workspace(
+        crate('worklume-storage', [['worklume-platform'], ['dbus-secret-service-keyring-store']]),
+      ),
+    );
+    assert.match(
+      violations.join('\n'),
+      /storage may not depend on dbus-secret-service-keyring-store/,
+    );
+  });
+
+  it('keeps the local database in storage', () => {
+    assert.deepEqual(
+      checkBoundaries(workspace(crate('worklume-storage', [['worklume-platform'], ['rusqlite']]))),
+      [],
+    );
+    const violations = checkBoundaries(workspace(crate('worklume-sync', [['rusqlite']])));
+    assert.match(violations.join('\n'), /the local database belongs to storage/);
+  });
+
   it('keeps network access in sync', () => {
     const violations = checkBoundaries(workspace(crate('worklume-storage', [['reqwest']])));
     assert.match(violations.join('\n'), /network access belongs to sync/);
