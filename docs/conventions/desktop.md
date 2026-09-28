@@ -20,7 +20,9 @@ profile.
   `platform` and `storage`; `sync` on those and `core`; the shell on all of them. A new crate
   fails the check until it gets a rule.
 - Only the shell may use Tauri or Specta, so the domain crates know nothing about the webview.
-- Only `platform` may use OS API crates (objc2, windows, x11rb, zbus, ashpd and similar).
+- Only `platform` may use OS API crates (objc2, windows, x11rb, zbus, ashpd, the keyring
+  stores and similar).
+- Only `storage` may use a database library (rusqlite).
 - Only `sync` may use HTTP clients.
 
 Dev-dependencies are exempt, so tests can use Tauri's mock runtime. This is the desktop
@@ -46,6 +48,97 @@ counterpart of the API's module-boundary tests.
 running agent, which shows its window, and exits. A headless check on Linux showed the second
 process exiting at once while the first kept running. The plugin stays on 2.4.x because 2.5
 requires Tauri 2.12.
+
+## Encrypted local storage
+
+E09-S02 built `worklume-storage` and the `SecretStore` trait in `worklume-platform`. The agent
+does not open the store yet; the tracker (E09-S04) owns its lifecycle.
+
+**Keys.**
+
+- One random 256-bit master key per device, stored in the OS credential store under the app
+  identifier (`com.worklume.agent`, entry `local-store-key`).
+- The database key and the spool key derive from it with HKDF-SHA256 and separate labels. One
+  keychain entry means one access prompt on macOS, and neither derived key reveals the other.
+- The key is stored as hex text, because KDE Wallet stores only UTF-8.
+- Keys are wiped from memory after use (`zeroize`).
+
+**Credential stores.**
+
+- Built on `keyring-core` 1.x with one store crate per OS, each linked only on its own target:
+  the macOS login keychain, Windows Credential Manager, and the Secret Service over D-Bus on Linux
+  (GNOME Keyring or KDE Wallet).
+- The `keyring` 4.x crate is now a sample wrapper, and its maintainers recommend depending on
+  the core and the stores directly.
+- The macOS data-protection keychain needs a signed app with a keychain-access-groups
+  entitlement, so it is left for signing (E10).
+- `OsSecretStore` refuses stores that forget secrets before they are deleted.
+- Only a definite "no such entry" counts as missing. A locked, denied or unreachable keychain is
+  an error, and the store stays closed. Treating those as missing would replace a key that may come
+  back, and lose the data it protects.
+
+**Database.**
+
+- SQLCipher 4.14 (SQLite 3.51) through `rusqlite` with `bundled-sqlcipher-vendored-openssl`, so
+  every OS encrypts with the same OpenSSL build and no system library decides whether data is
+  encrypted.
+- The cost is compile time: OpenSSL builds from source. On Windows it needs Perl, which the
+  runners have, and without NASM it builds with `no-asm`.
+- Opening checks `cipher_version`, because plain SQLite would silently ignore the key.
+- A raw key (`x'…'`) skips the passphrase KDF: the key is already random.
+
+**Durability.** The acceptance criterion is that a crash mid-write loses nothing journaled.
+
+- WAL with `synchronous = FULL`: every commit is flushed before `write` returns. The WAL default
+  (`NORMAL`) can lose recent commits on power loss.
+- `fullfsync` on macOS, where `fsync` stops at the drive cache.
+- A spool file is written under its final name with `create_new`, flushed (Rust's `sync_all` uses
+  `F_FULLFSYNC` on macOS), and its directory flushed, all before the transaction that indexes it
+  commits.
+- Opening deletes files without a row and reports rows without a file.
+- `tests/crash.rs` runs the test binary as a writer, kills it at varying moments over 12 rounds,
+  and checks every reported commit, the integrity checks, and the spool.
+- A process kill cannot imitate a power cut. The power-cut guarantee rests on SQLite's documented
+  behaviour with these settings; a real power-cut check belongs in the release test matrix.
+
+**Schema.**
+
+- Migrations are SQL files applied in order, tracked by `user_version`, each in its own
+  transaction. They are append-only.
+- A schema newer than the agent is refused, not downgraded.
+- Tables are `STRICT` with CHECK constraints: dotted event names, JSON-object payloads up to
+  256 KiB, 16-byte IDs, non-negative clocks.
+- `seq` and journal IDs use AUTOINCREMENT, so they are never reused after rows are deleted.
+- `store_info.store_id` names the outbox sequence. A store created from scratch gets a new one,
+  so the server can tell a restarted `seq` from a replay (E09-S05).
+
+**Recovery.**
+
+- If the credential store answers that it has no key while a database exists, or the entry is
+  not a key, or the key does not decrypt the database, the database and spool move to
+  `quarantine/<ms>/` and a new store starts. `OpenReport::recovered` says why, so the agent can
+  tell the member.
+- Only the latest quarantine is kept.
+- The data in quarantine cannot be decrypted without its key; it is kept for diagnosis.
+
+**Other rules.**
+
+- A lock file (`File::try_lock`) keeps a second process out.
+- On Unix the store directory is `0700` and spool files `0600`.
+- Temporary tables stay in memory.
+
+**Caps.**
+
+- The defaults are 2 GB and 30 days (architecture §13). The server's policy can override them
+  (E09-S06).
+- `enforce_caps` evicts spool files only: first files past the age limit, then the oldest until
+  the store fits. Outbox events and the journal record time worked and are never evicted.
+- The eviction report lists what went, so the agent can warn the member and report the gaps
+  (E09-S07).
+
+**Tests against real keychains.** `platform/tests/os_secret_store.rs` is ignored by default. The
+desktop workflow runs it with `--ignored` on macOS and Windows, and on Ubuntu inside
+`dbus-run-session` with GNOME Keyring unlocked.
 
 ## Rust tasks in Turborepo
 
@@ -114,6 +207,8 @@ the CLI and the crates together.
 ## Deferred
 
 - Localised tray labels and UI strings: E09-S09 (agent UI).
-- Logging of best-effort failures (hiding or focusing a window): E09-S11.
+- Logging of best-effort failures (hiding or focusing a window): E09-S11. SQLCipher also logs
+  decryption failures to stderr; E09-S11 routes its log into the agent's.
+- Opening the store at startup, off the main thread, and showing its state: E09-S04.
 - A monochrome template tray icon for the macOS menu bar: E10-S07.
 - Code signing, notarisation and the updater: E09-S10 and E10–E13.

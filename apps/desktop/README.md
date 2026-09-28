@@ -4,7 +4,8 @@ The Worklume desktop agent: a Tauri 2 app that lives in the menu bar (macOS) or 
 (Windows, Linux). Right now it is a shell: a tray icon with **Open Worklume** and **Quit
 Worklume**, a window that starts hidden and hides again when closed, a single running instance,
 and one typed command (`agent_status`) behind an IPC allowlist. Tracking, storage and sync
-arrive in the rest of epic E09.
+arrive in the rest of epic E09. The encrypted local store (`storage/`) exists and is tested,
+but the app does not open it until the tracker arrives (E09-S04).
 
 ## Layout
 
@@ -16,9 +17,10 @@ arrive in the rest of epic E09.
 | `src-tauri/capabilities/`          | IPC allowlist for the main window                                      |
 | `src-tauri/tests/`                 | Integration tests, including Tauri mock-runtime and allowlist tests    |
 | `core/`                            | `worklume-core`: tracker, slots, screenshots, idle, policy (E09-S04+)  |
-| `storage/`                         | `worklume-storage`: encrypted local store (E09-S02)                    |
+| `storage/`                         | `worklume-storage`: SQLCipher journal and outbox, encrypted spool      |
+| `storage/migrations/`              | Local schema migrations, applied in order, append-only                 |
 | `sync/`                            | `worklume-sync`: outbox drain and uploads (E09-S05)                    |
-| `platform/`                        | `worklume-platform`: OS integration behind traits; platform detection  |
+| `platform/`                        | `worklume-platform`: OS integration behind traits; OS credential store |
 | `scripts/`                         | Crate dependency rules, checked on every lint                          |
 | `src-tauri/icons/`, `icon.svg`     | App icons, generated from `icon.svg`                                   |
 
@@ -40,7 +42,10 @@ Node and pnpm as for the rest of the repo, plus Rust (installed automatically fr
 
 - **macOS:** Xcode Command Line Tools (`xcode-select --install`).
 - **Windows:** Microsoft C++ Build Tools and WebView2 (preinstalled on Windows 11).
-- **Ubuntu:** `sudo apt install libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev libssl-dev build-essential`.
+- **Ubuntu:** `sudo apt install libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev libssl-dev libdbus-1-dev pkg-config build-essential`.
+
+The store's SQLCipher build compiles OpenSSL from source, which needs Perl (preinstalled on
+macOS and Ubuntu; on Windows, Strawberry Perl). The first build takes a few minutes longer.
 
 ## Commands
 
@@ -58,7 +63,9 @@ Lint and test build the UI first, because the Rust crate embeds `dist/` at compi
 
 `.github/workflows/desktop.yml` lints, tests and builds unsigned installers on macOS (Apple
 silicon), Windows and Ubuntu 22.04 when desktop code changes, and on demand from the Actions
-tab. Artifacts (`.dmg`, `.msi`, `.exe`, `.deb`, `.rpm`, `.AppImage`) are kept for 14 days.
+tab. It also runs the credential store tests against each OS's real keychain (GNOME Keyring on
+Ubuntu); run them locally with `cargo test -p worklume-platform --test os_secret_store -- --ignored`.
+Artifacts (`.dmg`, `.msi`, `.exe`, `.deb`, `.rpm`, `.AppImage`) are kept for 14 days.
 Signing, notarisation and the updater arrive with E09-S10 and the per-OS epics.
 
 ## Regenerating icons
