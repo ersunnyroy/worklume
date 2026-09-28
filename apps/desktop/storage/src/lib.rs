@@ -24,12 +24,14 @@ mod caps;
 mod db;
 mod error;
 mod keys;
+mod library_log;
 mod model;
 mod spool;
 mod store;
 
 pub use caps::{EvictionReport, StorageCaps, StorageUsage};
 pub use error::StorageError;
+pub use library_log::route_sqlcipher_log;
 pub use model::{
     EventId, EventType, JournalEntry, JournalId, JournalKind, MAX_PAYLOAD_BYTES, NewEvent,
     NewJournalEntry, OutboxEvent, Payload, Seq, SpoolEntry, SpoolId, SpoolKind, Timestamp,

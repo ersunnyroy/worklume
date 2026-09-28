@@ -3,8 +3,8 @@
 The Worklume desktop agent: a Tauri 2 app that lives in the menu bar (macOS) or system tray
 (Windows, Linux). Right now it is a shell: a tray icon with **Open Worklume** and **Quit
 Worklume**, a window that starts hidden and hides again when closed, a single running instance,
-and one typed command (`agent_status`) behind an IPC allowlist. Tracking, storage and sync
-arrive in the rest of epic E09. The encrypted local store (`storage/`) exists and is tested,
+one typed command (`agent_status`) behind an IPC allowlist, and, in release builds, a watchdog
+that restarts the agent after a crash. Tracking, storage and sync arrive in the rest of epic E09. The encrypted local store (`storage/`) exists and is tested,
 but the app does not open it until the tracker arrives (E09-S04).
 
 ## Layout
@@ -14,6 +14,8 @@ but the app does not open it until the tracker arrives (E09-S04).
 | `frontend/`                        | React UI rendered in the webview (Vite root)                           |
 | `frontend/src/ipc/bindings.gen.ts` | Typed command bindings, generated from `src-tauri/src/ipc.rs`          |
 | `src-tauri/`                       | The Tauri shell crate `worklume-desktop`: tray, window, IPC, lifecycle |
+| `src-tauri/src/watchdog.rs`        | Supervisor that restarts the agent after a crash                       |
+| `src-tauri/src/diagnostics/`       | Log files and crash reports, without personal data                     |
 | `src-tauri/capabilities/`          | IPC allowlist for the main window                                      |
 | `src-tauri/tests/`                 | Integration tests, including Tauri mock-runtime and allowlist tests    |
 | `core/`                            | `worklume-core`: tracker, slots, screenshots, idle, policy (E09-S04+)  |
@@ -58,6 +60,17 @@ macOS and Ubuntu; on Windows, Strawberry Perl). The first build takes a few minu
 | `pnpm --filter @worklume/desktop test`      | Vitest, script tests and `cargo test` for all crates    |
 
 Lint and test build the UI first, because the Rust crate embeds `dist/` at compile time.
+
+## Logs and crash reports
+
+Logs are JSON lines in `~/Library/Logs/com.worklume.agent` (macOS) or
+`<local app data>/com.worklume.agent/logs` (Windows, Linux): `agent.<date>.log`,
+`supervisor.<date>.log` and `sqlcipher.log`, kept for 7 days. `WORKLUME_LOG=debug` shows more.
+Debug builds also print to the terminal.
+
+Debug builds run without the watchdog; `WORKLUME_WATCHDOG=on` turns it on. Crash reports go to
+Sentry only when the build sets `WORKLUME_SENTRY_DSN`. See
+[docs/conventions/desktop.md](../../docs/conventions/desktop.md) for what is logged and reported.
 
 ## CI
 

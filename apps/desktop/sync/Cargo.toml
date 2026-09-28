@@ -8,6 +8,8 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
+# Blocking HTTP with the OS TLS stack; the agent's workers are threads, not an async runtime.
+ureq = { version = "3.4.2", default-features = false, features = ["native-tls"] }
 worklume-core = { path = "../core" }
 worklume-storage = { path = "../storage" }
 
