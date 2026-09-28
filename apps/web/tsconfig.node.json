@@ -1,0 +1,12 @@
+{
+  "extends": "@worklume/tsconfig/node-library.json",
+  "compilerOptions": {
+    "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.node.tsbuildinfo",
+    "lib": ["ES2023", "DOM"],
+    "types": ["node"],
+    "allowJs": true,
+    "checkJs": true,
+    "resolveJsonModule": true
+  },
+  "include": ["vite.config.ts", "playwright.config.ts", "e2e", "scripts", "security-headers.json"]
+}

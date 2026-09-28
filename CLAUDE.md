@@ -54,5 +54,5 @@ performance review → document → commit. Tests are never skipped.
 
 ## Commands
 
-`pnpm install`, then `pnpm check` (format, lint, typecheck, test, build). See `README.md` and
-`CONTRIBUTING.md` for the rest.
+`pnpm install`, then `pnpm check` (format, lint, typecheck, test, build) and `pnpm test:e2e`
+(browser smoke tests). See `README.md` and `CONTRIBUTING.md` for the rest.

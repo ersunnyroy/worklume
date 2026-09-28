@@ -9,7 +9,7 @@ share.
 | Path                     | What lives there                                                 | Arrives in |
 | ------------------------ | ---------------------------------------------------------------- | ---------- |
 | `apps/api`               | Laravel API, modular monolith (`app/Domains/*`)                  | E00-S02    |
-| `apps/web`               | React web app (Vite, TanStack Router and Query)                  | E00-S08    |
+| `apps/web`               | React web app (Vite, TanStack Router and Query); see its README  | E00-S08    |
 | `apps/desktop`           | Tauri 2 desktop agent: Rust core with per-OS adapters, React UI  | E00-S09    |
 | `apps/mobile`            | Expo (React Native) app                                          | E00-S09    |
 | `packages/tsconfig`      | Shared TypeScript settings                                       | E00-S01    |
@@ -50,6 +50,8 @@ build, across every workspace package, with Turborepo caching.
 | Command          | Does                                          |
 | ---------------- | --------------------------------------------- |
 | `pnpm check`     | Format check, lint, typecheck, test and build |
+| `pnpm dev`       | Start every app's dev server                  |
+| `pnpm test:e2e`  | Browser smoke tests against production builds |
 | `pnpm lint`      | Lint every package                            |
 | `pnpm typecheck` | Typecheck every package                       |
 | `pnpm test`      | Run every package's tests                     |
