@@ -68,29 +68,3 @@ fn handle_menu_event<R: Runtime>(app: &AppHandle<R>, event: &MenuEvent) {
         None => {}
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::TrayAction;
-
-    #[test]
-    fn ids_round_trip() {
-        for action in TrayAction::ALL {
-            assert_eq!(TrayAction::from_id(action.id()), Some(action));
-        }
-    }
-
-    #[test]
-    fn ids_are_unique() {
-        let mut ids: Vec<&str> = TrayAction::ALL.iter().map(|action| action.id()).collect();
-        ids.sort_unstable();
-        ids.dedup();
-        assert_eq!(ids.len(), TrayAction::ALL.len());
-    }
-
-    #[test]
-    fn unknown_ids_are_ignored() {
-        assert_eq!(TrayAction::from_id("delete-everything"), None);
-        assert_eq!(TrayAction::from_id(""), None);
-    }
-}

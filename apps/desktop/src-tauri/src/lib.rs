@@ -7,7 +7,7 @@ mod tray;
 mod window;
 
 pub use tray::TrayAction;
-pub use window::MAIN_WINDOW;
+pub use window::{MAIN_WINDOW, on_run_event};
 
 /// Builds and runs the application until the user quits from the tray.
 ///

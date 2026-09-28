@@ -14,6 +14,7 @@ sync arrive in epic E09.
 | `src-tauri/src/tray.rs`        | Tray icon and menu                                                 |
 | `src-tauri/src/window.rs`      | Window behaviour: close hides, "Open" restores                     |
 | `src-tauri/capabilities/`      | IPC allowlist for the webview (empty for now)                      |
+| `src-tauri/tests/`             | Rust integration tests, including Tauri mock-runtime tests         |
 | `src-tauri/tauri.conf.json`    | App identity, window, CSP and bundle settings                      |
 | `src-tauri/icons/`, `icon.svg` | App icons, generated from `icon.svg`                               |
 

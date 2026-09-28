@@ -24,6 +24,14 @@ Turborepo runs tasks in strict environment mode, so the desktop tasks pass throu
 
 Tests may unwrap, expect and panic (`clippy.toml`); production code may not (workspace lints).
 
+Rust tests live in `src-tauri/tests/` as integration tests against the crate's public API, and
+the library and binary have no unit-test harness (`test = false`). On Windows, Tauri's tray and
+menus need version 6 of the Common Controls, which an executable requests in its manifest.
+`tauri_build` embeds that manifest only in the app binary, so test executables failed to start
+with `STATUS_ENTRYPOINT_NOT_FOUND`. `build.rs` adds the manifest dependency to integration tests
+through `cargo::rustc-link-arg-tests`, which reaches integration tests but not unit-test
+harnesses; hence the layout.
+
 ## Tray-resident window behaviour
 
 The window starts hidden. Closing it cancels the close and hides the window, so tracking keeps
