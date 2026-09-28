@@ -1,0 +1,29 @@
+# Dependencies
+node_modules/
+vendor/
+
+# Build output and caches
+dist/
+build/
+coverage/
+target/
+.turbo/
+*.tsbuildinfo
+.phpunit.cache/
+.phpstan.cache/
+
+# Environment and secrets (commit only *.example files)
+.env
+.env.*
+!.env.example
+*.pem
+*.p12
+*.key
+
+# Logs and OS/editor files
+*.log
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json

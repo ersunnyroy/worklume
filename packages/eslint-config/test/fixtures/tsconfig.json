@@ -1,0 +1,4 @@
+{
+  "extends": "@worklume/tsconfig/react-app.json",
+  "include": ["*.ts"]
+}

@@ -1,0 +1,24 @@
+{
+  "name": "@worklume/tsconfig",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Shared TypeScript compiler settings for Worklume apps and packages.",
+  "license": "UNLICENSED",
+  "type": "module",
+  "files": [
+    "base.json",
+    "react-app.json",
+    "node-library.json"
+  ],
+  "exports": {
+    "./base.json": "./base.json",
+    "./react-app.json": "./react-app.json",
+    "./node-library.json": "./node-library.json"
+  },
+  "scripts": {
+    "typecheck": "tsc -p test/tsconfig.base.json && tsc -p test/tsconfig.react-app.json && tsc -p test/tsconfig.node-library.json"
+  },
+  "devDependencies": {
+    "typescript": "6.0.3"
+  }
+}

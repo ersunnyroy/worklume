@@ -1,0 +1,8 @@
+# Every path needs an owner's review before merge (branch protection enforces it).
+# Narrow these to team handles as teams form, e.g. /apps/desktop/ @worklume/desktop.
+*                  @ersunnyroy
+
+# Tenancy, security and data-model changes always need the architecture owner.
+/docs/planning/    @ersunnyroy
+/CLAUDE.md         @ersunnyroy
+/.github/          @ersunnyroy

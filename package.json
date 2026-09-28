@@ -1,0 +1,27 @@
+{
+  "name": "worklume",
+  "private": true,
+  "description": "Worklume monorepo: API, web, desktop agent, mobile app and shared packages.",
+  "license": "UNLICENSED",
+  "packageManager": "pnpm@12.6.0",
+  "engines": {
+    "node": ">=22.13.0",
+    "pnpm": ">=12.6.0"
+  },
+  "scripts": {
+    "build": "turbo run build",
+    "lint": "turbo run lint",
+    "typecheck": "turbo run typecheck",
+    "test": "turbo run test",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "commitlint": "commitlint",
+    "check": "pnpm run format:check && turbo run lint typecheck test build"
+  },
+  "devDependencies": {
+    "@commitlint/cli": "21.2.3",
+    "@commitlint/config-conventional": "21.2.3",
+    "prettier": "3.9.9",
+    "turbo": "2.11.4"
+  }
+}

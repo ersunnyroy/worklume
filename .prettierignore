@@ -1,0 +1,9 @@
+pnpm-lock.yaml
+**/node_modules
+**/vendor
+**/dist
+**/coverage
+**/target
+**/.turbo
+# Exported planning documents are kept byte-for-byte as published.
+docs/planning
