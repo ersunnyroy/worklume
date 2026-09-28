@@ -11,6 +11,31 @@ the contract tests that compare API routes with the contract (after E00-S02) wou
 hundreds of endpoints that don't exist yet. It starts with `/health` and `/ready` from E00-S02,
 and the shared problem-details schema.
 
+## Desktop events: agent and contract in step
+
+`POST /v1/desktop/sync` and its `DesktopEvent` schemas came with the tracker (E09-S04), which
+produces the events. The API side arrives with E07-S03.
+
+- **Envelope:** `event_id`, `seq`, `type`, `wall_time`, `mono_time`, `clock_offset_ms` and
+  `payload`, from architecture §13.
+- **Variants:** each event type is its own `allOf` over the envelope, with
+  `unevaluatedProperties: false`, so neither the envelope nor the payload accepts unknown fields.
+- **Server obligations:** each event schema's description states what the server must do with
+  it.
+
+Drift is caught from both sides:
+
+- `apps/desktop/sync/tests/contract_fixture.rs` runs the real tracker through a scenario that
+  produces every event type. It encodes the events as the sync client will, and compares them
+  with `test/fixtures/desktop-events.json`, with IDs replaced by placeholders.
+  `UPDATE_FIXTURES=1` rewrites the fixture.
+- `test/desktop-events.test.js` validates every fixture event against the schema with Ajv
+  (JSON Schema 2020-12, with formats). It requires every schema type to appear in the fixture,
+  and checks that missing, extra and malformed fields are refused.
+- Changing an event without the contract fails the Rust test; changing the contract without the
+  agent fails the JavaScript test. The desktop package's Turborepo test inputs include the
+  fixture.
+
 ## Conventions as lint rules
 
 The API catalog's conventions that a machine can check are Spectral rules (see the package

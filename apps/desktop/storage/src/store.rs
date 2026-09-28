@@ -64,6 +64,8 @@ pub struct Store {
     spool: Spool,
     dir: PathBuf,
     _lock: File,
+    #[cfg(feature = "fault-injection")]
+    injected_failures: std::sync::atomic::AtomicU32,
 }
 
 impl fmt::Debug for Store {
@@ -142,6 +144,8 @@ impl Store {
             spool: Spool::new(spool_dir, &master.spool_key()),
             dir: dir.to_path_buf(),
             _lock: lock,
+            #[cfg(feature = "fault-injection")]
+            injected_failures: std::sync::atomic::AtomicU32::new(0),
         })
     }
 
@@ -190,6 +194,8 @@ impl Store {
         &self,
         write: impl FnOnce(&mut WriteTx<'_>) -> Result<T, StorageError>,
     ) -> Result<T, StorageError> {
+        #[cfg(feature = "fault-injection")]
+        self.take_injected_failure()?;
         let mut connection = self.connection();
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let mut tx = WriteTx {
@@ -358,6 +364,30 @@ impl Store {
             }
         }
         Ok(problems)
+    }
+
+    /// Makes the next `count` calls to [`Store::write`] fail before touching the database, as
+    /// a full disk or a busy database would. For tests only.
+    #[cfg(feature = "fault-injection")]
+    pub fn fail_next_writes(&self, count: u32) {
+        self.injected_failures
+            .store(count, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    #[cfg(feature = "fault-injection")]
+    fn take_injected_failure(&self) -> Result<(), StorageError> {
+        use std::sync::atomic::Ordering;
+        let failed = self
+            .injected_failures
+            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |left| {
+                left.checked_sub(1)
+            })
+            .is_ok();
+        if failed {
+            Err(StorageError::Io(io::Error::other("injected write failure")))
+        } else {
+            Ok(())
+        }
     }
 
     pub(crate) fn connection(&self) -> MutexGuard<'_, Connection> {

@@ -1,0 +1,175 @@
+[
+  {
+    "clock_offset_ms": null,
+    "event_id": "00000000-0000-7000-8000-000000000001",
+    "mono_time": {
+      "boot_id": "4c1e0f7a-boot",
+      "ms": 7200000
+    },
+    "payload": {
+      "project_id": "00000000-0000-7000-8000-000000000002",
+      "task_id": "00000000-0000-7000-8000-000000000003",
+      "trigger": "user"
+    },
+    "seq": 1,
+    "type": "timer.started",
+    "wall_time": "2026-09-21T14:03:00Z"
+  },
+  {
+    "clock_offset_ms": null,
+    "event_id": "00000000-0000-7000-8000-000000000004",
+    "mono_time": {
+      "boot_id": "4c1e0f7a-boot",
+      "ms": 7620000
+    },
+    "payload": {
+      "active_seconds": 84,
+      "flags": [
+        "partial_slot"
+      ],
+      "idle_seconds": 0,
+      "input_method": "hooks",
+      "keyboard_seconds": 60,
+      "mouse_seconds": 24,
+      "project_id": "00000000-0000-7000-8000-000000000002",
+      "slot_start": "2026-09-21T14:00:00Z",
+      "task_id": "00000000-0000-7000-8000-000000000003",
+      "time_entry_id": "00000000-0000-7000-8000-000000000001",
+      "tracked_seconds": 420
+    },
+    "seq": 2,
+    "type": "slot.closed",
+    "wall_time": "2026-09-21T14:10:00Z"
+  },
+  {
+    "clock_offset_ms": null,
+    "event_id": "00000000-0000-7000-8000-000000000005",
+    "mono_time": {
+      "boot_id": "4c1e0f7a-boot",
+      "ms": 7320000
+    },
+    "payload": {
+      "time_entry_id": "00000000-0000-7000-8000-000000000001"
+    },
+    "seq": 3,
+    "type": "idle.detected",
+    "wall_time": "2026-09-21T14:05:00Z"
+  },
+  {
+    "clock_offset_ms": null,
+    "event_id": "00000000-0000-7000-8000-000000000006",
+    "mono_time": {
+      "boot_id": "4c1e0f7a-boot",
+      "ms": 7650000
+    },
+    "payload": {
+      "idle_period_id": "00000000-0000-7000-8000-000000000005",
+      "reassigned_project_id": "00000000-0000-7000-8000-000000000007",
+      "resolution": "reassign",
+      "time_entry_id": "00000000-0000-7000-8000-000000000001"
+    },
+    "seq": 4,
+    "type": "idle.resolved",
+    "wall_time": "2026-09-21T14:10:30Z"
+  },
+  {
+    "clock_offset_ms": null,
+    "event_id": "00000000-0000-7000-8000-000000000008",
+    "mono_time": {
+      "boot_id": "4c1e0f7a-boot",
+      "ms": 7710000
+    },
+    "payload": {
+      "reason": "break",
+      "time_entry_id": "00000000-0000-7000-8000-000000000001"
+    },
+    "seq": 5,
+    "type": "timer.stopped",
+    "wall_time": "2026-09-21T14:11:30Z"
+  },
+  {
+    "clock_offset_ms": null,
+    "event_id": "00000000-0000-7000-8000-000000000009",
+    "mono_time": {
+      "boot_id": "4c1e0f7a-boot",
+      "ms": 7710000
+    },
+    "payload": {
+      "break_policy_id": "00000000-0000-7000-8000-00000000000a"
+    },
+    "seq": 6,
+    "type": "break.started",
+    "wall_time": "2026-09-21T14:11:30Z"
+  },
+  {
+    "clock_offset_ms": null,
+    "event_id": "00000000-0000-7000-8000-00000000000b",
+    "mono_time": {
+      "boot_id": "4c1e0f7a-boot",
+      "ms": 8010000
+    },
+    "payload": {
+      "break_id": "00000000-0000-7000-8000-000000000009"
+    },
+    "seq": 7,
+    "type": "break.ended",
+    "wall_time": "2026-09-21T14:16:30Z"
+  },
+  {
+    "clock_offset_ms": null,
+    "event_id": "00000000-0000-7000-8000-00000000000c",
+    "mono_time": {
+      "boot_id": "4c1e0f7a-boot",
+      "ms": 8010000
+    },
+    "payload": {
+      "project_id": "00000000-0000-7000-8000-000000000002",
+      "task_id": "00000000-0000-7000-8000-000000000003",
+      "trigger": "break_end"
+    },
+    "seq": 8,
+    "type": "timer.started",
+    "wall_time": "2026-09-21T14:16:30Z"
+  },
+  {
+    "clock_offset_ms": null,
+    "event_id": "00000000-0000-7000-8000-00000000000d",
+    "mono_time": {
+      "boot_id": "4c1e0f7a-boot",
+      "ms": 8055000
+    },
+    "payload": {
+      "reason": "user",
+      "time_entry_id": "00000000-0000-7000-8000-00000000000c"
+    },
+    "seq": 9,
+    "type": "timer.stopped",
+    "wall_time": "2026-09-21T14:17:15Z"
+  },
+  {
+    "clock_offset_ms": null,
+    "event_id": "00000000-0000-7000-8000-00000000000e",
+    "mono_time": {
+      "boot_id": "4c1e0f7a-boot",
+      "ms": 8220000
+    },
+    "payload": {
+      "active_seconds": 73,
+      "flags": [
+        "partial_slot"
+      ],
+      "idle_seconds": 30,
+      "input_method": "hooks",
+      "keyboard_seconds": 52,
+      "mouse_seconds": 21,
+      "project_id": "00000000-0000-7000-8000-000000000002",
+      "slot_start": "2026-09-21T14:10:00Z",
+      "task_id": "00000000-0000-7000-8000-000000000003",
+      "time_entry_id": "00000000-0000-7000-8000-000000000001",
+      "tracked_seconds": 135
+    },
+    "seq": 10,
+    "type": "slot.closed",
+    "wall_time": "2026-09-21T14:20:00Z"
+  }
+]

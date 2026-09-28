@@ -8,10 +8,16 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
+serde_json = "1.0.149"
 # Blocking HTTP with the OS TLS stack; the agent's workers are threads, not an async runtime.
 ureq = { version = "3.4.2", default-features = false, features = ["native-tls"] }
 worklume-core = { path = "../core" }
 worklume-storage = { path = "../storage" }
+
+[dev-dependencies]
+tempfile = "3.27.0"
+uuid = "1.26.1"
+worklume-platform = { path = "../platform", features = ["fake"] }
 
 [lints]
 workspace = true

@@ -7,6 +7,10 @@ rust-version.workspace = true
 license.workspace = true
 publish.workspace = true
 
+[features]
+# Test doubles for other crates' tests and the simulation harness. Never enabled in the app.
+fake = []
+
 [dependencies]
 keyring-core = "1.0.0"
 thiserror = "2.0.18"

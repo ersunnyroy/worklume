@@ -5,6 +5,7 @@
 //! server verdicts. It never drops an event without a server acknowledgement. Built in E09-S05.
 //!
 //! So far it holds the agent's HTTPS client settings ([`http`]), which crash reports already
-//! use.
+//! use, and the JSON encoding of outbox events ([`envelope`]).
 
+pub mod envelope;
 pub mod http;

@@ -4,8 +4,9 @@ The Worklume desktop agent: a Tauri 2 app that lives in the menu bar (macOS) or 
 (Windows, Linux). Right now it is a shell: a tray icon with **Open Worklume** and **Quit
 Worklume**, a window that starts hidden and hides again when closed, a single running instance,
 one typed command (`agent_status`) behind an IPC allowlist, and, in release builds, a watchdog
-that restarts the agent after a crash. Tracking, storage and sync arrive in the rest of epic E09. The encrypted local store (`storage/`) exists and is tested,
-but the app does not open it until the tracker arrives (E09-S04).
+that restarts the agent after a crash. The tracker (`core/`) and the encrypted store
+(`storage/`) exist and are tested; the app runs them once sign-in and the agent UI arrive
+(E09-S03, E09-S09).
 
 ## Layout
 
@@ -18,7 +19,7 @@ but the app does not open it until the tracker arrives (E09-S04).
 | `src-tauri/src/diagnostics/`       | Log files and crash reports, without personal data                     |
 | `src-tauri/capabilities/`          | IPC allowlist for the main window                                      |
 | `src-tauri/tests/`                 | Integration tests, including Tauri mock-runtime and allowlist tests    |
-| `core/`                            | `worklume-core`: tracker, slots, screenshots, idle, policy (E09-S04+)  |
+| `core/`                            | `worklume-core`: tracker state machine and 10-minute slots             |
 | `storage/`                         | `worklume-storage`: SQLCipher journal and outbox, encrypted spool      |
 | `storage/migrations/`              | Local schema migrations, applied in order, append-only                 |
 | `sync/`                            | `worklume-sync`: outbox drain and uploads (E09-S05)                    |

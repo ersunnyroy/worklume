@@ -18,3 +18,5 @@ apps/mobile/android
 apps/mobile/ios
 packages/api-client/src/schema.gen.ts
 apps/desktop/frontend/src/ipc/bindings.gen.ts
+# Written by apps/desktop/sync/tests/contract_fixture.rs
+packages/api-contract/test/fixtures/desktop-events.json

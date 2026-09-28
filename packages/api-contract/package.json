@@ -18,7 +18,10 @@
     "@types/node": "22.20.4",
     "@worklume/eslint-config": "workspace:*",
     "@worklume/tsconfig": "workspace:*",
+    "ajv": "8.20.0",
+    "ajv-formats": "2.1.1",
     "eslint": "10.11.0",
-    "typescript": "6.0.3"
+    "typescript": "6.0.3",
+    "yaml": "2.9.1"
   }
 }
