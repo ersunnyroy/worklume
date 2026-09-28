@@ -224,6 +224,12 @@ fn nothing_is_readable_on_disk() {
         "{files:?}"
     );
     for file in &files {
+        // The lock file stays empty. Windows locks all of it while the store is open, so it
+        // cannot be read from another handle; check its size instead.
+        if file.ends_with("store.lock") {
+            assert_eq!(fs::metadata(file).unwrap().len(), 0);
+            continue;
+        }
         let bytes = fs::read(file).unwrap();
         assert!(
             !bytes
