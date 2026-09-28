@@ -48,10 +48,10 @@ silently disables a rule (for example `no-floating-promises`) fails the build.
 
 ## Rust workspace
 
-The root `Cargo.toml` defines shared edition, lints and the pinned toolchain (1.95.0) with no
-members yet. `cargo check` at the root reports an empty workspace until the first crate arrives
-in E00-S09. Rust tasks join Turborepo through the desktop app's `package.json` scripts at that
-point, rather than through root-level cargo calls.
+The root `Cargo.toml` defines the shared edition, lints, release profile and pinned toolchain
+(1.95.0). Its first member, the desktop shell, arrived in E00-S09. Rust tasks join Turborepo
+through the desktop app's `package.json` scripts rather than root-level cargo calls; see
+[desktop.md](desktop.md).
 
 `unsafe_code` is denied workspace-wide. The per-OS platform adapters are the only crates
 expected to opt in, and `clippy::undocumented_unsafe_blocks` requires a `SAFETY:` comment on
