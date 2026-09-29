@@ -1,0 +1,48 @@
+{
+    "$schema": "https://getcomposer.org/schema.json",
+    "name": "worklume/api",
+    "type": "project",
+    "description": "The Worklume API: a Laravel modular monolith.",
+    "license": "proprietary",
+    "require": {
+        "php": "^8.4",
+        "laravel/framework": "^13.23",
+        "laravel/horizon": "^5.50",
+        "laravel/octane": "^2.20",
+        "laravel/passport": "^13.8",
+        "laravel/pennant": "^1.26",
+        "laravel/reverb": "^1.12",
+        "laravel/tinker": "^3.0",
+        "league/flysystem-aws-s3-v3": "^3.35"
+    },
+    "require-dev": {
+        "deptrac/deptrac": "^4.7",
+        "fakerphp/faker": "^1.24",
+        "larastan/larastan": "^3.12",
+        "laravel/pint": "^1.32",
+        "mockery/mockery": "^1.6",
+        "nunomaduro/collision": "^8.9",
+        "pestphp/pest": "^5.2",
+        "pestphp/pest-plugin-laravel": "^5.0",
+        "symfony/yaml": "^7.4 || ^8.0"
+    },
+    "extra": {
+        "laravel": {
+            "dont-discover": []
+        }
+    },
+    "config": {
+        "platform": {
+            "php": "8.4.0"
+        },
+        "optimize-autoloader": true,
+        "preferred-install": "dist",
+        "sort-packages": true,
+        "allow-plugins": {
+            "pestphp/pest-plugin": true,
+            "php-http/discovery": true
+        }
+    },
+    "minimum-stability": "stable",
+    "prefer-stable": true
+}
