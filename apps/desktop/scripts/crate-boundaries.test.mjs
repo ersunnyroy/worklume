@@ -43,6 +43,17 @@ describe('checkBoundaries', () => {
     assert.match(violations.join('\n'), /operating-system APIs/);
   });
 
+  it('keeps raw system calls in the platform crate', () => {
+    assert.deepEqual(
+      checkBoundaries(workspace(crate('worklume-platform', [['libc'], ['windows-sys']]))),
+      [],
+    );
+    const violations = checkBoundaries(
+      workspace(crate('worklume-core', [['worklume-platform'], ['worklume-storage'], ['libc']])),
+    );
+    assert.match(violations.join('\n'), /worklume-core may not depend on libc/);
+  });
+
   it('keeps the OS credential store in the platform crate', () => {
     assert.deepEqual(
       checkBoundaries(

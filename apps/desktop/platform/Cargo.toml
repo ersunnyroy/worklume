@@ -16,17 +16,25 @@ keyring-core = "1.0.0"
 thiserror = "2.0.18"
 zeroize = "1.8.2"
 
-# One credential store per OS, each linked only on its own target.
+# One credential store per OS, each linked only on its own target, plus the OS clock APIs.
 [target.'cfg(target_os = "macos")'.dependencies]
 apple-native-keyring-store = { version = "1.0.2", features = ["keychain"] }
+libc = "0.2.189"
 
 [target.'cfg(target_os = "windows")'.dependencies]
 # The default `search` feature pulls in regex for a feature the agent does not use.
 windows-native-keyring-store = { version = "1.1.0", default-features = false }
+windows-sys = { version = "0.61.2", features = [
+  "Win32_Foundation",
+  "Win32_Security",
+  "Win32_System_Registry",
+  "Win32_System_WindowsProgramming",
+] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 # Encrypts the D-Bus session with the Secret Service in pure Rust; links the system libdbus.
 dbus-secret-service-keyring-store = { version = "1.0.1", features = ["crypto-rust"] }
+libc = "0.2.189"
 
 [lints]
 workspace = true

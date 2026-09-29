@@ -22,7 +22,7 @@ export const restrictedCrates = [
   },
   {
     pattern:
-      /^(objc2(-.+)?|block2|core-foundation|core-graphics|windows|windows-sys|x11rb|xcb|zbus|ashpd|atspi|wayland-client|security-framework(-sys)?|dbus(-.+)?|secret-service|keyring|keyring-core|.+-keyring-store)$/,
+      /^(libc|objc2(-.+)?|block2|core-foundation|core-graphics|windows|windows-sys|x11rb|xcb|zbus|ashpd|atspi|wayland-client|security-framework(-sys)?|dbus(-.+)?|secret-service|keyring|keyring-core|.+-keyring-store)$/,
     allowedIn: ['worklume-platform'],
     reason: 'operating-system APIs belong in the platform adapters',
   },

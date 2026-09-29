@@ -13,36 +13,59 @@ use common::{Harness, target, uuid};
 use serde_json::json;
 use uuid::Uuid;
 use worklume_core::tracker::{
-    IdleResolution, PauseReason, StateName, Tracker, TrackerError, TrackerState,
+    Action, DecidedBy, IdleResolution, PauseReason, StateName, Tracker, TrackerError, TrackerState,
 };
 
 const POLICY: Uuid = Uuid::from_u128(0x0192_0000_0000_7000_8000_0000_0000_0b0b);
 
-/// A new tracker brought into `state`.
-fn tracker_in(harness: &mut Harness, state: StateName) -> Tracker {
+/// Where a test starts: each state, plus a pause that began while idle time awaited a decision.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Setup {
+    Stopped,
+    Running,
+    IdlePending,
+    Paused,
+    PausedAwaitingIdle,
+    OnBreak,
+}
+
+/// A new tracker brought into `setup`.
+fn tracker_in(harness: &mut Harness, setup: Setup) -> Tracker {
     let mut tracker = harness.tracker();
     let now = harness.clock.now();
-    match state {
-        StateName::Stopped => {}
-        StateName::Running => tracker.start(target(1), &now).unwrap(),
-        StateName::IdlePending => {
+    let expected = match setup {
+        Setup::Stopped => StateName::Stopped,
+        Setup::Running => {
+            tracker.start(target(1), &now).unwrap();
+            StateName::Running
+        }
+        Setup::IdlePending | Setup::PausedAwaitingIdle => {
             tracker.start(target(1), &now).unwrap();
             let since = harness.pass(&mut tracker, 10);
             let now = harness.pass(&mut tracker, 300);
             tracker.idle_detected(&since, &now).unwrap();
+            if setup == Setup::IdlePending {
+                StateName::IdlePending
+            } else {
+                let now = harness.pass(&mut tracker, 5);
+                tracker.pause(PauseReason::Sleep, &now).unwrap();
+                StateName::Paused
+            }
         }
-        StateName::Paused => {
+        Setup::Paused => {
             tracker.start(target(1), &now).unwrap();
             let now = harness.clock.advance_secs(5);
             tracker.pause(PauseReason::Sleep, &now).unwrap();
+            StateName::Paused
         }
-        StateName::OnBreak => {
+        Setup::OnBreak => {
             tracker.start(target(1), &now).unwrap();
             let now = harness.clock.advance_secs(5);
             tracker.start_break(POLICY, &now).unwrap();
+            StateName::OnBreak
         }
-    }
-    assert_eq!(tracker.state().name(), state);
+    };
+    assert_eq!(tracker.state().name(), expected);
     tracker
 }
 
@@ -67,7 +90,7 @@ fn perform(tracker: &mut Tracker, harness: &mut Harness, act: Act) -> Result<(),
         Act::Switch => tracker.switch(target(2), &now),
         Act::Stop => tracker.stop(&now),
         Act::IdleDetected => tracker.idle_detected(&since, &now),
-        Act::ResolveIdle => tracker.resolve_idle(IdleResolution::Keep, &now),
+        Act::ResolveIdle => tracker.resolve_idle(IdleResolution::Keep, DecidedBy::Member, &now),
         Act::Pause => tracker.pause(PauseReason::SessionLocked, &now),
         Act::Resume => tracker.resume(&now),
         Act::StartBreak => tracker.start_break(POLICY, &now),
@@ -75,16 +98,16 @@ fn perform(tracker: &mut Tracker, harness: &mut Harness, act: Act) -> Result<(),
     }
 }
 
-/// A state, and what each action does from it: `None` refused, `Some(state)` accepted.
-type Row = (StateName, [(Act, Option<StateName>); 9]);
+/// A starting point, and what each action does from it: `None` refused, `Some(state)` accepted.
+type Row = (Setup, [(Act, Option<StateName>); 9]);
 
-#[test]
-fn every_action_in_every_state() {
+/// Every starting point, and what each action does from it.
+fn transition_table() -> [Row; 6] {
     use Act::*;
     use StateName::*;
-    let table: [Row; 5] = [
+    [
         (
-            Stopped,
+            Setup::Stopped,
             [
                 (Start, Some(Running)),
                 (Switch, None),
@@ -98,7 +121,7 @@ fn every_action_in_every_state() {
             ],
         ),
         (
-            Running,
+            Setup::Running,
             [
                 (Start, None),
                 (Switch, Some(Running)),
@@ -112,21 +135,21 @@ fn every_action_in_every_state() {
             ],
         ),
         (
-            IdlePending,
+            Setup::IdlePending,
             [
                 (Start, None),
                 (Switch, None),
                 (Stop, None),
                 (IdleDetected, Some(IdlePending)),
                 (ResolveIdle, Some(Running)),
-                (Pause, None),
+                (Pause, Some(Paused)),
                 (Resume, Some(IdlePending)),
                 (StartBreak, None),
                 (EndBreak, None),
             ],
         ),
         (
-            Paused,
+            Setup::Paused,
             [
                 (Start, None),
                 (Switch, None),
@@ -140,7 +163,21 @@ fn every_action_in_every_state() {
             ],
         ),
         (
-            OnBreak,
+            Setup::PausedAwaitingIdle,
+            [
+                (Start, None),
+                (Switch, None),
+                (Stop, None),
+                (IdleDetected, Some(Paused)),
+                (ResolveIdle, Some(Paused)),
+                (Pause, Some(Paused)),
+                (Resume, None),
+                (StartBreak, None),
+                (EndBreak, None),
+            ],
+        ),
+        (
+            Setup::OnBreak,
             [
                 (Start, None),
                 (Switch, None),
@@ -153,9 +190,12 @@ fn every_action_in_every_state() {
                 (EndBreak, Some(Running)),
             ],
         ),
-    ];
+    ]
+}
 
-    for (from, row) in table {
+#[test]
+fn every_action_in_every_state() {
+    for (from, row) in transition_table() {
         for (act, expected) in row {
             let mut harness = Harness::new();
             let mut tracker = tracker_in(&mut harness, from);
@@ -266,6 +306,96 @@ fn pausing_is_safe_to_repeat_and_resumes_in_a_new_entry() {
 }
 
 #[test]
+fn a_pause_keeps_an_idle_decision_waiting() {
+    let mut harness = Harness::new();
+    let mut tracker = harness.tracker();
+    tracker.start(target(1), &harness.clock.now()).unwrap();
+    let since = harness.pass(&mut tracker, 60);
+    let detected = harness.pass(&mut tracker, 300);
+    tracker.idle_detected(&since, &detected).unwrap();
+    let TrackerState::IdlePending { entry, idle } = tracker.state().clone() else {
+        panic!("idle pending");
+    };
+    let asleep = harness.pass(&mut tracker, 30);
+    harness.clear_events();
+    tracker.pause(PauseReason::Sleep, &asleep).unwrap();
+
+    assert_eq!(
+        tracker.state(),
+        &TrackerState::Paused {
+            target: target(1),
+            reason: PauseReason::Sleep,
+            idle: Some(idle.clone()),
+        }
+    );
+    // The entry closes, and the idle period ends with it.
+    assert_eq!(harness.event_types(), ["timer.stopped"]);
+    let stop = harness.events_of("timer.stopped").remove(0);
+    assert_eq!(stop.payload["reason"], "sleep");
+    assert_eq!(uuid(&stop.payload["time_entry_id"]), entry.time_entry_id);
+
+    // Resuming or stopping now would drop the decision.
+    let woke = harness.clock.advance_secs(7_200);
+    let refused = |result: Result<(), TrackerError>, expected: Action| {
+        assert!(
+            matches!(result, Err(TrackerError::InvalidTransition { action, .. }) if action == expected),
+            "{expected:?}"
+        );
+    };
+    refused(tracker.resume(&woke), Action::Resume);
+    refused(tracker.stop(&woke), Action::Stop);
+
+    harness.clear_events();
+    tracker
+        .resolve_idle(IdleResolution::Discard, DecidedBy::Member, &woke)
+        .unwrap();
+    assert_eq!(
+        tracker.state(),
+        &TrackerState::Paused {
+            target: target(1),
+            reason: PauseReason::Sleep,
+            idle: None,
+        }
+    );
+    let resolved = harness.events_of("idle.resolved").remove(0);
+    assert_eq!(
+        uuid(&resolved.payload["idle_period_id"]),
+        idle.idle_period_id
+    );
+    assert_eq!(
+        uuid(&resolved.payload["time_entry_id"]),
+        entry.time_entry_id
+    );
+    assert_eq!(resolved.payload["resolution"], "discard");
+    assert_eq!(resolved.payload["decided_by"], "member");
+    tracker.resume(&woke).unwrap();
+    assert!(tracker.state().is_tracking());
+}
+
+#[test]
+fn the_stop_resolution_stops_a_paused_timer() {
+    let mut harness = Harness::new();
+    let mut tracker = tracker_in(&mut harness, Setup::PausedAwaitingIdle);
+    harness.clear_events();
+    tracker
+        .resolve_idle(
+            IdleResolution::Stop,
+            DecidedBy::Policy,
+            &harness.clock.advance_secs(60),
+        )
+        .unwrap();
+    assert_eq!(tracker.state(), &TrackerState::Stopped);
+    assert_eq!(
+        harness.event_types(),
+        ["idle.resolved"],
+        "the entry closed at the pause"
+    );
+    let resolved = harness.events_of("idle.resolved").remove(0);
+    assert_eq!(resolved.payload["resolution"], "stop");
+    assert_eq!(resolved.payload["decided_by"], "policy");
+}
+
+#[test]
 fn a_break_closes_the_entry_and_resumes_afterwards() {
     let mut harness = Harness::new();
     let mut tracker = harness.tracker();
@@ -339,6 +469,7 @@ fn idle_is_dated_when_it_began_and_resolved_by_the_server() {
     tracker
         .resolve_idle(
             IdleResolution::Reassign { project_id: other },
+            DecidedBy::Member,
             &harness.clock.advance_secs(20),
         )
         .unwrap();
@@ -362,7 +493,11 @@ fn idle_is_dated_when_it_began_and_resolved_by_the_server() {
     tracker.idle_detected(&since, &detected).unwrap();
     harness.clear_events();
     tracker
-        .resolve_idle(IdleResolution::Stop, &harness.clock.advance_secs(5))
+        .resolve_idle(
+            IdleResolution::Stop,
+            DecidedBy::Member,
+            &harness.clock.advance_secs(5),
+        )
         .unwrap();
     assert_eq!(harness.event_types(), ["idle.resolved"]);
     assert_eq!(harness.events()[0].payload["resolution"], "stop");

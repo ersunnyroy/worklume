@@ -21,7 +21,7 @@ use serde_json::Value;
 use tempfile::TempDir;
 use uuid::Uuid;
 use worklume_core::tracker::{
-    Activity, IdleResolution, InputMethod, Tracker, TrackerConfig, WorkTarget,
+    Activity, DecidedBy, IdleResolution, InputMethod, Tracker, TrackerConfig, WorkTarget,
 };
 use worklume_platform::fake::MemorySecretStore;
 use worklume_storage::{Store, Timestamp};
@@ -89,6 +89,7 @@ fn scenario() -> Vec<Value> {
             IdleResolution::Reassign {
                 project_id: OTHER_PROJECT,
             },
+            DecidedBy::Member,
             &decided,
         )
         .unwrap();

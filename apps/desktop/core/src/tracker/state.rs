@@ -41,7 +41,25 @@ pub enum PauseReason {
     SessionLocked,
 }
 
-/// The member's decision about an idle period (idle dialog, E09-S08).
+/// Who decided about an idle period.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DecidedBy {
+    /// The member, in the idle dialog.
+    Member,
+    /// The organization's keep-idle policy (`always` or `never`), without asking.
+    Policy,
+}
+
+impl DecidedBy {
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::Member => "member",
+            Self::Policy => "policy",
+        }
+    }
+}
+
+/// The decision about an idle period (the idle dialog, or the keep-idle policy).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IdleResolution {
     /// Count the idle time as worked.
@@ -79,10 +97,14 @@ pub enum TrackerState {
         idle: IdlePeriod,
     },
     /// The device slept or the session locked. The server's time entry is closed; `resume`
-    /// opens a new one on the same target.
+    /// opens a new one on the same target. If idle time was awaiting a decision when the pause
+    /// began, it still does: the idle period ended with the entry, and `resume` waits for the
+    /// decision.
     Paused {
         target: WorkTarget,
         reason: PauseReason,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        idle: Option<IdlePeriod>,
     },
     /// On a break. Break time is not tracked; ending the break resumes `resume_to`, if the timer
     /// was running.
@@ -94,6 +116,18 @@ pub enum TrackerState {
 }
 
 impl TrackerState {
+    /// Idle time awaiting a decision, while tracking or paused.
+    #[must_use]
+    pub fn pending_idle(&self) -> Option<&IdlePeriod> {
+        match self {
+            Self::IdlePending { idle, .. }
+            | Self::Paused {
+                idle: Some(idle), ..
+            } => Some(idle),
+            _ => None,
+        }
+    }
+
     /// The open entry, while time counts.
     #[must_use]
     pub fn entry(&self) -> Option<&Entry> {
@@ -151,6 +185,7 @@ pub enum Action {
     Stop,
     ResolveIdle,
     Pause,
+    Resume,
     StartBreak,
     EndBreak,
 }
@@ -163,6 +198,7 @@ impl fmt::Display for Action {
             Self::Stop => "stopping the timer",
             Self::ResolveIdle => "resolving idle time",
             Self::Pause => "pausing",
+            Self::Resume => "resuming",
             Self::StartBreak => "starting a break",
             Self::EndBreak => "ending a break",
         })

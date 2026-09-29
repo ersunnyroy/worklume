@@ -121,6 +121,33 @@ fn a_reboot_closes_open_slots_at_once() {
 }
 
 #[test]
+fn a_monotonic_clock_that_went_back_is_a_new_boot() {
+    let mut harness = Harness::new();
+    let mut tracker = harness.tracker();
+    tracker.start(target(1), &harness.clock.now()).unwrap();
+    harness.pass(&mut tracker, 90);
+    drop(tracker);
+    // A reboot the boot ID failed to show: the monotonic clock starts again from near zero.
+    harness.clock.wall_ms += 60_000;
+    harness.clock.mono_ms = 20_000;
+
+    let (tracker, recovery) = reopen(&mut harness);
+    assert_eq!(
+        recovery.unaccounted_ms, None,
+        "time across a reboot cannot be measured"
+    );
+    let slot = harness.events_of("slot.closed").remove(0);
+    assert_eq!(seconds(&slot, "tracked_seconds"), 90);
+    let restarted = harness.events_of("timer.started").remove(1);
+    assert_eq!(
+        restarted.time.wall_ms(),
+        harness.clock.wall_ms,
+        "derived time starts again from the wall clock"
+    );
+    assert!(tracker.state().is_tracking());
+}
+
+#[test]
 fn a_fresh_store_starts_stopped() {
     let harness = Harness::new();
     let (tracker, recovery) = Tracker::open(

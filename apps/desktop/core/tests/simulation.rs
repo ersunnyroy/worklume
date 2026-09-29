@@ -21,7 +21,9 @@ use std::sync::Arc;
 
 use common::{Harness, seconds, target, uuid};
 use uuid::Uuid;
-use worklume_core::tracker::{Activity, IdleResolution, PauseReason, Tracker, TrackerState};
+use worklume_core::tracker::{
+    Activity, DecidedBy, IdleResolution, PauseReason, Tracker, TrackerState,
+};
 use worklume_storage::Timestamp;
 
 const DAY_MS: i64 = 24 * 60 * 60 * 1_000;
@@ -89,7 +91,9 @@ fn act(tracker: &mut Tracker, harness: &Harness, rng: &mut Rng) {
             }
             _ => tracker.start_break(BREAK_POLICY, &now),
         },
-        TrackerState::IdlePending { .. } => {
+        // The device sleeps while idle time awaits a decision.
+        TrackerState::IdlePending { .. } if roll < 15 => tracker.pause(PauseReason::Sleep, &now),
+        TrackerState::IdlePending { .. } | TrackerState::Paused { idle: Some(_), .. } => {
             let resolution = match roll {
                 0..40 => IdleResolution::Keep,
                 40..70 => IdleResolution::Discard,
@@ -98,7 +102,12 @@ fn act(tracker: &mut Tracker, harness: &Harness, rng: &mut Rng) {
                 },
                 _ => IdleResolution::Stop,
             };
-            tracker.resolve_idle(resolution, &now)
+            let decided_by = if roll.is_multiple_of(2) {
+                DecidedBy::Member
+            } else {
+                DecidedBy::Policy
+            };
+            tracker.resolve_idle(resolution, decided_by, &now)
         }
         TrackerState::Paused { .. } if roll < 80 => tracker.resume(&now),
         TrackerState::Paused { .. } => tracker.stop(&now),
@@ -110,8 +119,10 @@ fn act(tracker: &mut Tracker, harness: &Harness, rng: &mut Rng) {
 /// Brings the tracker to a stop without letting time pass.
 fn wind_down(tracker: &mut Tracker, harness: &Harness) {
     let now = harness.clock.now();
-    if matches!(tracker.state(), TrackerState::IdlePending { .. }) {
-        tracker.resolve_idle(IdleResolution::Keep, &now).unwrap();
+    if tracker.state().pending_idle().is_some() {
+        tracker
+            .resolve_idle(IdleResolution::Keep, DecidedBy::Member, &now)
+            .unwrap();
     }
     if matches!(tracker.state(), TrackerState::OnBreak { .. }) {
         tracker.end_break(&now).unwrap();

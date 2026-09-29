@@ -10,7 +10,7 @@ use uuid::Uuid;
 use worklume_storage::{EventId, EventType, NewEvent, Payload};
 
 use super::TrackerError;
-use super::state::{Entry, IdleResolution, PauseReason, WorkTarget};
+use super::state::{DecidedBy, Entry, IdlePeriod, IdleResolution, PauseReason, WorkTarget};
 use crate::time::Moment;
 
 /// Why a time entry ended.
@@ -142,9 +142,9 @@ pub(crate) fn idle_detected(
 }
 
 pub(crate) fn idle_resolved(
-    idle_period_id: Uuid,
-    time_entry_id: Uuid,
+    idle: &IdlePeriod,
     resolution: IdleResolution,
+    decided_by: DecidedBy,
     at: &Moment,
 ) -> Result<NewEvent, TrackerError> {
     let reassigned = match resolution {
@@ -156,10 +156,11 @@ pub(crate) fn idle_resolved(
         "idle.resolved",
         at,
         fields([
-            ("idle_period_id", json!(idle_period_id)),
-            ("time_entry_id", json!(time_entry_id)),
+            ("idle_period_id", json!(idle.idle_period_id)),
+            ("time_entry_id", json!(idle.time_entry_id)),
             ("resolution", json!(resolution.as_str())),
             ("reassigned_project_id", reassigned),
+            ("decided_by", json!(decided_by.as_str())),
         ]),
     )
 }

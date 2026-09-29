@@ -83,6 +83,19 @@ describe('desktop events', () => {
     }
   });
 
+  it('say who decided about idle time', () => {
+    const resolved = events.find((event) => event.type === 'idle.resolved');
+    assert.ok(resolved);
+    assert.deepEqual(
+      errors({ ...resolved, payload: { ...resolved.payload, decided_by: 'policy' } }),
+      [],
+    );
+    const { decided_by: _dropped, ...undecided } = resolved.payload;
+    for (const payload of [undecided, { ...resolved.payload, decided_by: 'server' }]) {
+      assert.notDeepEqual(errors({ ...resolved, payload }), [], JSON.stringify(payload));
+    }
+  });
+
   it('keep slots within their bounds', () => {
     const slot = events.find((event) => event.type === 'slot.closed');
     assert.ok(slot);

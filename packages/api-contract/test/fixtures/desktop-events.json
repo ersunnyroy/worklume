@@ -63,6 +63,7 @@
       "ms": 7650000
     },
     "payload": {
+      "decided_by": "member",
       "idle_period_id": "00000000-0000-7000-8000-000000000005",
       "reassigned_project_id": "00000000-0000-7000-8000-000000000007",
       "resolution": "reassign",
