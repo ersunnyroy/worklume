@@ -23,7 +23,7 @@ mod script;
 mod server;
 mod timeline;
 
-pub use device::{Device, DeviceConfig, START_WALL_MS, SimError, Span};
+pub use device::{Device, DeviceConfig, Focus, START_WALL_MS, SimError, Span, UsageAllowance};
 pub use script::{Answer, Report, Step, run};
 pub use server::{FakeServer, Network, Verdict};
 pub use timeline::{Summary, TimelineCheck, check, parse_rfc3339_ms};

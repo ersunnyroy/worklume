@@ -29,13 +29,14 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use uuid::Uuid;
-use worklume_platform::{Clock, ClockError, ClockReading, IdleSource};
+use worklume_platform::{ActiveWindow, BrowserUrl, Clock, ClockError, ClockReading, IdleSource};
 use worklume_storage::{StorageError, Store, Timestamp};
 
 use crate::tracker::{
     Activity, DecidedBy, IdlePeriod, IdleResolution, PauseReason, Recovery, Tracker, TrackerConfig,
     TrackerError, TrackerState, WorkTarget,
 };
+use crate::usage::{UsagePolicy, UsageSample};
 
 /// A smaller growth in time asleep is noise from reading two counters microseconds apart.
 const MIN_SLEEP_MS: i64 = 1_000;
@@ -109,12 +110,26 @@ pub enum TimekeeperError {
     Tracker(#[from] TrackerError),
 }
 
+/// The device's sensors the timekeeper reads, each behind its platform trait.
+#[derive(Debug, Clone)]
+pub struct Sensors {
+    pub clock: Arc<dyn Clock>,
+    pub idle: Arc<dyn IdleSource>,
+    /// The foreground app, for app usage (E09-S12).
+    pub window: Arc<dyn ActiveWindow>,
+    /// The browser's active tab, for URL usage (E09-S12).
+    pub browser: Arc<dyn BrowserUrl>,
+}
+
 /// The tracker on the device's clock. See the module documentation.
 pub struct Timekeeper {
     tracker: Tracker,
     clock: Arc<dyn Clock>,
     idle: Arc<dyn IdleSource>,
+    window: Arc<dyn ActiveWindow>,
+    browser: Arc<dyn BrowserUrl>,
     policy: IdlePolicy,
+    usage_policy: UsagePolicy,
     /// The previous reading, to spot a sleep.
     last: ClockReading,
     /// Monotonic time of the member's last input, when the idle source knows it.
@@ -133,7 +148,8 @@ impl std::fmt::Debug for Timekeeper {
 }
 
 impl Timekeeper {
-    /// Restores the tracker (see [`Tracker::open`]) and applies the policy to its state.
+    /// Restores the tracker (see [`Tracker::open`]) and applies the idle policy to its state.
+    /// App and URL usage is off until [`Timekeeper::set_usage_policy`] turns it on.
     ///
     /// # Errors
     ///
@@ -141,22 +157,24 @@ impl Timekeeper {
     pub fn open(
         store: Arc<Store>,
         config: TrackerConfig,
-        clock: Arc<dyn Clock>,
-        idle: Arc<dyn IdleSource>,
+        sensors: Sensors,
         policy: IdlePolicy,
     ) -> Result<(Self, Recovery), TimekeeperError> {
-        let reading = clock.read()?;
+        let reading = sensors.clock.read()?;
         let (tracker, recovery) = Tracker::open(store, config, &timestamp(&reading)?)?;
         let mut keeper = Self {
             tracker,
-            clock,
-            idle,
+            clock: sensors.clock,
+            idle: sensors.idle,
+            window: sensors.window,
+            browser: sensors.browser,
             policy,
+            usage_policy: UsagePolicy::OFF,
             last: reading,
             last_input_mono: None,
             armed_mono: None,
         };
-        keeper.run(Activity::NONE, |_, _| Ok(()))?;
+        keeper.run(Activity::NONE, &UsageSample::NONE, |_, _| Ok(()))?;
         Ok((keeper, recovery))
     }
 
@@ -200,6 +218,16 @@ impl Timekeeper {
         self.policy = policy;
     }
 
+    #[must_use]
+    pub const fn usage_policy(&self) -> UsagePolicy {
+        self.usage_policy
+    }
+
+    /// Replaces the app and URL policy, from the next tick.
+    pub const fn set_usage_policy(&mut self, policy: UsagePolicy) {
+        self.usage_policy = policy;
+    }
+
     /// Accounts time since the previous call, with the input measured meanwhile, and detects
     /// idle time. Call it about once a second.
     ///
@@ -207,7 +235,14 @@ impl Timekeeper {
     ///
     /// Fails when the clock or the store fails; the next call catches up.
     pub fn tick(&mut self, activity: Activity) -> Result<Outcome, TimekeeperError> {
-        self.run(activity, Self::detect_idle)
+        // App and URL usage counts only while the timer runs and the member isn't idle, so the
+        // sensors are left alone otherwise.
+        let usage = if matches!(self.tracker.state(), TrackerState::Running { .. }) {
+            self.usage_policy.observe(&*self.window, &*self.browser)
+        } else {
+            UsageSample::NONE
+        };
+        self.run(activity, &usage, Self::detect_idle)
     }
 
     /// Starts the timer on `target`. See [`Tracker::start`].
@@ -216,7 +251,7 @@ impl Timekeeper {
     ///
     /// As [`Tracker::start`], or when the clock fails.
     pub fn start(&mut self, target: WorkTarget) -> Result<Outcome, TimekeeperError> {
-        self.run(Activity::NONE, |keeper, now| {
+        self.run(Activity::NONE, &UsageSample::NONE, |keeper, now| {
             keeper.tracker.start(target, now)?;
             keeper.arm(now);
             Ok(())
@@ -229,7 +264,7 @@ impl Timekeeper {
     ///
     /// As [`Tracker::switch`], or when the clock fails.
     pub fn switch(&mut self, target: WorkTarget) -> Result<Outcome, TimekeeperError> {
-        self.run(Activity::NONE, |keeper, now| {
+        self.run(Activity::NONE, &UsageSample::NONE, |keeper, now| {
             Ok(keeper.tracker.switch(target, now)?)
         })
     }
@@ -240,7 +275,7 @@ impl Timekeeper {
     ///
     /// As [`Tracker::stop`], or when the clock fails.
     pub fn stop(&mut self) -> Result<Outcome, TimekeeperError> {
-        self.run(Activity::NONE, |keeper, now| {
+        self.run(Activity::NONE, &UsageSample::NONE, |keeper, now| {
             Ok(keeper.tracker.stop(now)?)
         })
     }
@@ -251,7 +286,7 @@ impl Timekeeper {
     ///
     /// As [`Tracker::start_break`], or when the clock fails.
     pub fn start_break(&mut self, break_policy_id: Uuid) -> Result<Outcome, TimekeeperError> {
-        self.run(Activity::NONE, |keeper, now| {
+        self.run(Activity::NONE, &UsageSample::NONE, |keeper, now| {
             Ok(keeper.tracker.start_break(break_policy_id, now)?)
         })
     }
@@ -262,7 +297,7 @@ impl Timekeeper {
     ///
     /// As [`Tracker::end_break`], or when the clock fails.
     pub fn end_break(&mut self) -> Result<Outcome, TimekeeperError> {
-        self.run(Activity::NONE, |keeper, now| {
+        self.run(Activity::NONE, &UsageSample::NONE, |keeper, now| {
             keeper.tracker.end_break(now)?;
             keeper.arm(now);
             Ok(())
@@ -276,7 +311,7 @@ impl Timekeeper {
     ///
     /// Fails unless idle time awaits a decision, or when the clock or the store fails.
     pub fn resolve_idle(&mut self, resolution: IdleResolution) -> Result<Outcome, TimekeeperError> {
-        self.run(Activity::NONE, |keeper, now| {
+        self.run(Activity::NONE, &UsageSample::NONE, |keeper, now| {
             let paused = matches!(keeper.tracker.state(), TrackerState::Paused { .. });
             keeper
                 .tracker
@@ -296,7 +331,7 @@ impl Timekeeper {
     ///
     /// As [`Tracker::resume`], or when the clock fails.
     pub fn resume(&mut self) -> Result<Outcome, TimekeeperError> {
-        self.run(Activity::NONE, |keeper, now| {
+        self.run(Activity::NONE, &UsageSample::NONE, |keeper, now| {
             keeper.tracker.resume(now)?;
             keeper.arm(now);
             Ok(())
@@ -308,12 +343,13 @@ impl Timekeeper {
     fn run(
         &mut self,
         activity: Activity,
+        usage: &UsageSample,
         action: impl FnOnce(&mut Self, &Timestamp) -> Result<(), TimekeeperError>,
     ) -> Result<Outcome, TimekeeperError> {
         let before = self.prompt();
         let reading = self.clock.read()?;
         let now = timestamp(&reading)?;
-        let slept = self.catch_up(&reading, &now, activity)?;
+        let slept = self.catch_up(&reading, &now, activity, usage)?;
         action(self, &now)?;
         self.settle(&now)?;
         let after = self.prompt();
@@ -332,6 +368,7 @@ impl Timekeeper {
         reading: &ClockReading,
         now: &Timestamp,
         activity: Activity,
+        usage: &UsageSample,
     ) -> Result<Option<Duration>, TimekeeperError> {
         let same_boot =
             reading.boot_id == self.last.boot_id && reading.mono_ms >= self.last.mono_ms;
@@ -350,7 +387,7 @@ impl Timekeeper {
             self.tracker.tick(now, Activity::NONE)?;
             Some(Duration::from_millis(u64::try_from(slept_ms).unwrap_or(0)))
         } else {
-            self.tracker.tick(now, activity)?;
+            self.tracker.tick_with(now, activity, usage)?;
             None
         };
         // Only once the sleep is dealt with: a failure above sees the same sleep next time.

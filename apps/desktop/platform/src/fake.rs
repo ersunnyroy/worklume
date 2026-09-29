@@ -8,8 +8,9 @@ use std::time::Duration;
 use zeroize::Zeroizing;
 
 use crate::{
-    Clock, ClockError, ClockReading, IdleError, IdleSource, Secret, SecretStore, SecretStoreError,
-    SecretStoreErrorKind,
+    ActiveWindow, BrowserTab, BrowserUrl, Clock, ClockError, ClockReading, ForegroundApp,
+    IdleError, IdleSource, Secret, SecretStore, SecretStoreError, SecretStoreErrorKind,
+    SensorError,
 };
 
 /// A credential store in memory. It can be switched to fail like a locked keychain.
@@ -198,6 +199,90 @@ impl IdleSource for FakeIdle {
             now.mono_ms
         };
         Ok(Duration::from_millis(u64::try_from(since).unwrap_or(0)))
+    }
+}
+
+/// A foreground app the test sets, with the title kept back unless asked for, as the real
+/// readers do. It records whether a title was ever asked for.
+#[derive(Debug, Default)]
+pub struct FakeWindow {
+    app: Mutex<Option<ForegroundApp>>,
+    error: Mutex<Option<SensorError>>,
+    titles_asked: Mutex<bool>,
+}
+
+impl FakeWindow {
+    /// Puts `app` in front, or nothing.
+    pub fn set(&self, app: Option<ForegroundApp>) {
+        *lock(&self.app) = app;
+    }
+
+    /// Makes reads fail with `error`, or work again with `None`.
+    pub fn set_error(&self, error: Option<SensorError>) {
+        *lock(&self.error) = error;
+    }
+
+    /// Whether any read asked for the window title.
+    #[must_use]
+    pub fn titles_asked(&self) -> bool {
+        *lock(&self.titles_asked)
+    }
+}
+
+impl ActiveWindow for FakeWindow {
+    fn foreground(&self, with_title: bool) -> Result<Option<ForegroundApp>, SensorError> {
+        if let Some(error) = lock(&self.error).clone() {
+            return Err(error);
+        }
+        if with_title {
+            *lock(&self.titles_asked) = true;
+        }
+        Ok(lock(&self.app).clone().map(|mut app| {
+            if !with_title {
+                app.title = None;
+            }
+            app
+        }))
+    }
+}
+
+/// Browser tabs by app identifier, set by the test. It records whether it was ever read.
+#[derive(Debug, Default)]
+pub struct FakeBrowser {
+    tabs: Mutex<HashMap<String, BrowserTab>>,
+    error: Mutex<Option<SensorError>>,
+    read: Mutex<bool>,
+}
+
+impl FakeBrowser {
+    /// The tab the browser with identifier `app` shows, or none.
+    pub fn set(&self, app: &str, tab: Option<BrowserTab>) {
+        let mut tabs = lock(&self.tabs);
+        match tab {
+            Some(tab) => tabs.insert(app.to_owned(), tab),
+            None => tabs.remove(app),
+        };
+    }
+
+    /// Makes reads fail with `error`, or work again with `None`.
+    pub fn set_error(&self, error: Option<SensorError>) {
+        *lock(&self.error) = error;
+    }
+
+    /// Whether any tab was read.
+    #[must_use]
+    pub fn was_read(&self) -> bool {
+        *lock(&self.read)
+    }
+}
+
+impl BrowserUrl for FakeBrowser {
+    fn active_tab(&self, app: &ForegroundApp) -> Result<Option<BrowserTab>, SensorError> {
+        *lock(&self.read) = true;
+        if let Some(error) = lock(&self.error).clone() {
+            return Err(error);
+        }
+        Ok(lock(&self.tabs).get(&app.identifier).cloned())
     }
 }
 

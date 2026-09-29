@@ -96,6 +96,30 @@ describe('desktop events', () => {
     }
   });
 
+  it('refuse usage detail the agent never sends', () => {
+    const apps = events.find((event) => event.type === 'app_usage.batch');
+    const urls = events.find((event) => event.type === 'url_usage.batch');
+    assert.ok(apps && urls);
+    const app = /** @type {Record<string, unknown>[]} */ (apps.payload['apps'])[0];
+    const site = /** @type {Record<string, unknown>[]} */ (urls.payload['sites'])[0];
+    for (const broken of [
+      { ...urls, payload: { ...urls.payload, sites: [{ ...site, path: '/search?q=salary' }] } },
+      { ...urls, payload: { ...urls.payload, sites: [{ ...site, path: '/a#b' }] } },
+      { ...urls, payload: { ...urls.payload, sites: [{ ...site, url: 'https://github.com/' }] } },
+      { ...urls, payload: { ...urls.payload, sites: [] } },
+      { ...apps, payload: { ...apps.payload, apps: [{ ...app, title: '' }] } },
+      { ...apps, payload: { ...apps.payload, apps: [{ ...app, seconds: 0 }] } },
+      { ...apps, payload: { ...apps.payload, apps: [{ ...app, seconds: 601 }] } },
+      { ...apps, payload: { ...apps.payload, member_id: apps.payload['slot_id'] } },
+    ]) {
+      assert.notDeepEqual(errors(broken), [], JSON.stringify(broken.payload));
+    }
+    assert.deepEqual(
+      errors({ ...urls, payload: { ...urls.payload, sites: [{ ...site, path: null }] } }),
+      [],
+    );
+  });
+
   it('keep slots within their bounds', () => {
     const slot = events.find((event) => event.type === 'slot.closed');
     assert.ok(slot);

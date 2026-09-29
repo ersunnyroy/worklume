@@ -44,6 +44,7 @@ use events::{StartTrigger, StopReason};
 use slots::{Interval, Slots};
 
 use crate::time::Moment;
+use crate::usage::UsageSample;
 
 /// Journal kind of the tracker's snapshot.
 pub const SNAPSHOT_KIND: &str = "tracker.snapshot";
@@ -163,6 +164,7 @@ impl Core {
         &mut self,
         now: &Timestamp,
         activity: &Activity,
+        usage: &UsageSample,
         config: &TrackerConfig,
         out: &mut Vec<NewEvent>,
     ) -> Result<Moment, TrackerError> {
@@ -184,6 +186,7 @@ impl Core {
                     idle: matches!(self.state, TrackerState::IdlePending { .. }),
                     clock_adjusted: jumped,
                     anchor: &anchor,
+                    usage,
                 });
             }
         }
@@ -334,7 +337,22 @@ impl Tracker {
     ///
     /// Fails when the store fails; the time is then accounted by the next call.
     pub fn tick(&mut self, now: &Timestamp, activity: Activity) -> Result<(), TrackerError> {
-        self.run(now, activity, |_, _, _| Ok(()))
+        self.tick_with(now, activity, &UsageSample::NONE)
+    }
+
+    /// As [`Tracker::tick`], with what was in front meanwhile (E09-S12), already reduced to what
+    /// the usage policy keeps.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the store fails; the time is then accounted by the next call.
+    pub fn tick_with(
+        &mut self,
+        now: &Timestamp,
+        activity: Activity,
+        usage: &UsageSample,
+    ) -> Result<(), TrackerError> {
+        self.run_with(now, activity, usage, |_, _, _| Ok(()))
     }
 
     /// Starts the timer on `target`.
@@ -605,9 +623,19 @@ impl Tracker {
         activity: Activity,
         action: impl FnOnce(&mut Core, &Moment, &mut Vec<NewEvent>) -> Result<(), TrackerError>,
     ) -> Result<(), TrackerError> {
+        self.run_with(now, activity, &UsageSample::NONE, action)
+    }
+
+    fn run_with(
+        &mut self,
+        now: &Timestamp,
+        activity: Activity,
+        usage: &UsageSample,
+        action: impl FnOnce(&mut Core, &Moment, &mut Vec<NewEvent>) -> Result<(), TrackerError>,
+    ) -> Result<(), TrackerError> {
         let mut next = self.core.clone();
         let mut out = Vec::new();
-        let current = next.advance(now, &activity, &self.config, &mut out)?;
+        let current = next.advance(now, &activity, usage, &self.config, &mut out)?;
         action(&mut next, &current, &mut out)?;
 
         let heartbeat = u64::try_from(self.config.heartbeat_interval.as_millis()).unwrap_or(0);

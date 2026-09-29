@@ -23,6 +23,7 @@ use uuid::Uuid;
 use worklume_core::tracker::{
     Activity, DecidedBy, IdleResolution, InputMethod, Tracker, TrackerConfig, WorkTarget,
 };
+use worklume_core::usage::{AppUse, SiteUse, UsageSample};
 use worklume_platform::fake::MemorySecretStore;
 use worklume_storage::{Store, Timestamp};
 use worklume_sync::envelope;
@@ -48,10 +49,20 @@ impl Clock {
     }
 
     fn tick(&mut self, tracker: &mut Tracker, seconds: u32, activity: Activity) -> Timestamp {
+        self.tick_with(tracker, seconds, activity, &UsageSample::NONE)
+    }
+
+    fn tick_with(
+        &mut self,
+        tracker: &mut Tracker,
+        seconds: u32,
+        activity: Activity,
+        usage: &UsageSample,
+    ) -> Timestamp {
         for _ in 0..seconds {
             self.wall_ms += 1_000;
             self.mono_ms += 1_000;
-            tracker.tick(&self.now(), activity).unwrap();
+            tracker.tick_with(&self.now(), activity, usage).unwrap();
         }
         self.now()
     }
@@ -80,7 +91,29 @@ fn scenario() -> Vec<Value> {
         task_id: Some(TASK),
     };
     tracker.start(target, &clock.now()).unwrap();
-    let idle_since = clock.tick(&mut tracker, 120, busy);
+    let editor = UsageSample {
+        app: Some(AppUse {
+            identifier: "com.microsoft.VSCode".to_owned(),
+            name: "Visual Studio Code".to_owned(),
+            title: Some("main.rs — worklume".to_owned()),
+        }),
+        site: None,
+    };
+    let browser = UsageSample {
+        app: Some(AppUse {
+            identifier: "com.google.Chrome".to_owned(),
+            name: "Google Chrome".to_owned(),
+            title: None,
+        }),
+        site: Some(SiteUse {
+            domain: "github.com".to_owned(),
+            path: Some("/acme/api/pull/7".to_owned()),
+            browser: "chrome".to_owned(),
+            private_window: false,
+        }),
+    };
+    clock.tick_with(&mut tracker, 90, busy, &editor);
+    let idle_since = clock.tick_with(&mut tracker, 30, busy, &browser);
     let detected = clock.tick(&mut tracker, 300, Activity::NONE);
     tracker.idle_detected(&idle_since, &detected).unwrap();
     let decided = clock.tick(&mut tracker, 30, Activity::NONE);
@@ -152,6 +185,8 @@ fn events_match_the_contract_fixture() {
         "break.started",
         "break.ended",
         "slot.closed",
+        "app_usage.batch",
+        "url_usage.batch",
     ] {
         assert!(types.contains(&expected), "the scenario covers {expected}");
     }

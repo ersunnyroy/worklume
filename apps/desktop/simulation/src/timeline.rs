@@ -6,7 +6,8 @@ use std::fmt;
 
 use serde_json::Value;
 
-use crate::device::Span;
+use crate::device::{Span, UsageAllowance};
+use worklume_core::usage::UsageLevel;
 
 /// A moment in an event: its wall time (RFC 3339 in the event) and its monotonic reading.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -39,6 +40,12 @@ pub struct Summary {
     pub slots: usize,
     pub idle_periods: usize,
     pub breaks: usize,
+    /// `app_usage.batch` and `url_usage.batch` events.
+    pub usage_batches: usize,
+    /// Seconds of app usage across all slots.
+    pub app_seconds: i64,
+    /// Seconds of website usage across all slots.
+    pub site_seconds: i64,
 }
 
 /// The result of [`check`].
@@ -73,9 +80,16 @@ impl fmt::Display for TimelineCheck {
 /// - One slot per 10-minute window, with 1 to 600 tracked seconds, attributed to a known entry.
 /// - Slots add up to the entries' tracked time within one second.
 /// - At the end nothing is open: no entry, idle period or break.
+/// - App and URL usage comes once per kind after its slot, adds up to no more than the slot's
+///   tracked time, and holds no more detail than `allowance`: no titles or paths unless some
+///   policy allowed them, never a query or fragment, never a path or title from a private
+///   window.
 #[must_use]
-pub fn check(events: &[Value], untracked: &[Span]) -> TimelineCheck {
-    let mut fold = Fold::default();
+pub fn check(events: &[Value], untracked: &[Span], allowance: &UsageAllowance) -> TimelineCheck {
+    let mut fold = Fold {
+        allowance: Some(allowance.clone()),
+        ..Fold::default()
+    };
     for event in events {
         fold.apply(event);
     }
@@ -98,6 +112,17 @@ struct Fold {
     pending_since: Option<Point>,
     open_break: Option<String>,
     slot_windows: HashSet<String>,
+    /// Closed slots by ID: window, tracked seconds, and the usage batches seen for it.
+    slots: HashMap<String, SlotRecord>,
+    allowance: Option<UsageAllowance>,
+}
+
+#[derive(Debug, Default)]
+struct SlotRecord {
+    window: String,
+    tracked: i64,
+    apps: bool,
+    sites: bool,
 }
 
 impl Fold {
@@ -146,7 +171,9 @@ impl Fold {
             }
             "break.started" => self.break_started(&label, id),
             "break.ended" => self.break_ended(&label, &text("break_id")),
-            "slot.closed" => self.slot_closed(&label, payload),
+            "slot.closed" => self.slot_closed(&label, &id, payload),
+            "app_usage.batch" => self.app_usage(&label, payload),
+            "url_usage.batch" => self.url_usage(&label, payload),
             other => self.fail(format!("{label}: unknown event type {other}")),
         }
     }
@@ -278,7 +305,7 @@ impl Fold {
         }
     }
 
-    fn slot_closed(&mut self, label: &str, payload: &Value) {
+    fn slot_closed(&mut self, label: &str, id: &str, payload: &Value) {
         let window = payload["slot_start"]
             .as_str()
             .unwrap_or_default()
@@ -299,6 +326,114 @@ impl Fold {
         }
         self.summary.slots += 1;
         self.summary.slot_seconds += tracked;
+        self.slots.insert(
+            id.to_owned(),
+            SlotRecord {
+                window,
+                tracked,
+                ..SlotRecord::default()
+            },
+        );
+    }
+
+    /// Checks a usage batch's slot and total, and returns its records.
+    fn usage_batch<'a>(&mut self, label: &str, payload: &'a Value, list: &str) -> &'a [Value] {
+        self.summary.usage_batches += 1;
+        let records = payload[list].as_array().map_or(&[][..], Vec::as_slice);
+        let total: i64 = records
+            .iter()
+            .map(|record| record["seconds"].as_i64().unwrap_or(0))
+            .sum();
+        let slot_id = payload["slot_id"].as_str().unwrap_or_default();
+        let window = payload["slot_start"].as_str().unwrap_or_default();
+        let problem = match self.slots.get_mut(slot_id) {
+            None => Some(format!("{label}: slot {slot_id} was not sent before it")),
+            Some(slot) => {
+                let seen = if list == "apps" {
+                    &mut slot.apps
+                } else {
+                    &mut slot.sites
+                };
+                if *seen {
+                    Some(format!("{label}: a second batch for slot {slot_id}"))
+                } else if slot.window != window {
+                    *seen = true;
+                    Some(format!(
+                        "{label}: slot_start {window} is not the slot's {}",
+                        slot.window
+                    ))
+                } else if total > slot.tracked {
+                    *seen = true;
+                    Some(format!(
+                        "{label}: {total} s of usage in a slot of {} s",
+                        slot.tracked
+                    ))
+                } else {
+                    *seen = true;
+                    None
+                }
+            }
+        };
+        if let Some(problem) = problem {
+            self.fail(problem);
+        }
+        if records.is_empty() {
+            self.fail(format!("{label}: an empty batch"));
+        }
+        records
+    }
+
+    fn app_usage(&mut self, label: &str, payload: &Value) {
+        let records = self.usage_batch(label, payload, "apps");
+        let allowance = self.allowance.clone().unwrap_or_default();
+        for record in records {
+            self.summary.app_seconds += record["seconds"].as_i64().unwrap_or(0);
+            let title = record["title"].as_str();
+            if allowance.level < UsageLevel::Apps {
+                self.fail(format!(
+                    "{label}: app usage under level {:?}",
+                    allowance.level
+                ));
+            }
+            if let Some(title) = title {
+                if !allowance.window_titles {
+                    self.fail(format!("{label}: title {title:?} kept with titles off"));
+                }
+                if allowance.private_titles.contains(title) {
+                    self.fail(format!("{label}: title {title:?} of a private window kept"));
+                }
+            }
+        }
+    }
+
+    fn url_usage(&mut self, label: &str, payload: &Value) {
+        let records = self.usage_batch(label, payload, "sites");
+        let allowance = self.allowance.clone().unwrap_or_default();
+        for record in records {
+            self.summary.site_seconds += record["seconds"].as_i64().unwrap_or(0);
+            let private = record["private_window"].as_bool().unwrap_or(false);
+            let path = record["path"].as_str();
+            if allowance.level < UsageLevel::Domains {
+                self.fail(format!(
+                    "{label}: site usage under level {:?}",
+                    allowance.level
+                ));
+            }
+            if private && !allowance.private_sites {
+                self.fail(format!("{label}: a private window's site kept"));
+            }
+            if let Some(path) = path {
+                if allowance.level < UsageLevel::Paths {
+                    self.fail(format!("{label}: path {path:?} kept below the paths level"));
+                }
+                if private {
+                    self.fail(format!("{label}: path {path:?} of a private window kept"));
+                }
+                if path.contains(['?', '#']) || !path.starts_with('/') {
+                    self.fail(format!("{label}: path {path:?} is not a bare path"));
+                }
+            }
+        }
     }
 
     fn finish(mut self, untracked: &[Span]) -> TimelineCheck {

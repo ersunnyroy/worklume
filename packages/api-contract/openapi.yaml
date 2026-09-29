@@ -291,7 +291,8 @@ components:
         One outbox event. The envelope is the same for every type (architecture §13); `type`
         decides the payload. The envelope time is the moment the change took effect, which is not
         always when it was recorded: `idle.detected` is dated when idle began, a restart's
-        `timer.stopped` at the agent's last snapshot, and `slot.closed` at the end of its window.
+        `timer.stopped` at the agent's last snapshot, and `slot.closed` and its usage batches at
+        the end of the slot's window.
       oneOf:
         - $ref: '#/components/schemas/TimerStartedEvent'
         - $ref: '#/components/schemas/TimerStoppedEvent'
@@ -300,6 +301,8 @@ components:
         - $ref: '#/components/schemas/BreakStartedEvent'
         - $ref: '#/components/schemas/BreakEndedEvent'
         - $ref: '#/components/schemas/SlotClosedEvent'
+        - $ref: '#/components/schemas/AppUsageBatchEvent'
+        - $ref: '#/components/schemas/UrlUsageBatchEvent'
       discriminator:
         propertyName: type
         mapping:
@@ -310,6 +313,8 @@ components:
           break.started: '#/components/schemas/BreakStartedEvent'
           break.ended: '#/components/schemas/BreakEndedEvent'
           slot.closed: '#/components/schemas/SlotClosedEvent'
+          app_usage.batch: '#/components/schemas/AppUsageBatchEvent'
+          url_usage.batch: '#/components/schemas/UrlUsageBatchEvent'
     DesktopEventEnvelope:
       type: object
       required: [event_id, seq, type, wall_time, mono_time, clock_offset_ms, payload]
@@ -526,6 +531,127 @@ components:
         break_id:
           type: string
           format: uuid
+    AppUsageBatchEvent:
+      description: >-
+        Time in each foreground application during one slot, sent right after its
+        `slot.closed`. Only time while the timer ran and the member wasn't idle counts, so the
+        seconds never exceed the slot's. The agent keeps only what the member's app and URL
+        policy allows: nothing at level `off`, and window titles only when titles are on (never
+        for a private browser window). The server matches `identifier` to the global
+        application catalog for the device's platform, stores rows in `app_usage` against the
+        slot `slot_id`, which must belong to this device, and drops titles the member's
+        current policy forbids (E16-S02). Application usage is sensitive: it is readable only
+        by the member and by roles with `activity.view_apps` in scope.
+      unevaluatedProperties: false
+      allOf:
+        - $ref: '#/components/schemas/DesktopEventEnvelope'
+        - type: object
+          required: [type, payload]
+          properties:
+            type:
+              const: app_usage.batch
+            payload:
+              $ref: '#/components/schemas/AppUsageBatchPayload'
+    AppUsageBatchPayload:
+      type: object
+      additionalProperties: false
+      required: [slot_id, slot_start, apps]
+      properties:
+        slot_id:
+          type: string
+          format: uuid
+          description: The `event_id` of the slot's `slot.closed`.
+        slot_start:
+          type: string
+          format: date-time
+        apps:
+          type: array
+          minItems: 1
+          maxItems: 100
+          items:
+            type: object
+            additionalProperties: false
+            required: [identifier, name, title, seconds]
+            properties:
+              identifier:
+                type: string
+                minLength: 1
+                maxLength: 256
+                description: >-
+                  Bundle ID (macOS), executable name (Windows) or desktop-file ID (Linux).
+              name:
+                type: string
+                maxLength: 256
+              title:
+                type: [string, 'null']
+                minLength: 1
+                maxLength: 256
+                description: The window title, only when the organization keeps titles.
+              seconds:
+                type: integer
+                minimum: 1
+                maximum: 600
+    UrlUsageBatchEvent:
+      description: >-
+        Time on each website during one slot, sent right after its `slot.closed`, at the
+        `domains` level and above. `domain` is the registrable domain (eTLD+1), or the whole
+        host when it has no public suffix. `path` is set only at the `paths` level and never for
+        a private window. Query strings, fragments and credentials never leave the device, nor
+        do addresses that aren't web pages. A private window keeps its domain only, or is left
+        out, by policy. The server stores rows in `url_usage` against the slot `slot_id`, which
+        must belong to this device, and drops paths and private-window sites the member's
+        current policy forbids (E16-S02). Website usage is sensitive: it is readable only by
+        the member and by roles with `activity.view_urls` in scope.
+      unevaluatedProperties: false
+      allOf:
+        - $ref: '#/components/schemas/DesktopEventEnvelope'
+        - type: object
+          required: [type, payload]
+          properties:
+            type:
+              const: url_usage.batch
+            payload:
+              $ref: '#/components/schemas/UrlUsageBatchPayload'
+    UrlUsageBatchPayload:
+      type: object
+      additionalProperties: false
+      required: [slot_id, slot_start, sites]
+      properties:
+        slot_id:
+          type: string
+          format: uuid
+          description: The `event_id` of the slot's `slot.closed`.
+        slot_start:
+          type: string
+          format: date-time
+        sites:
+          type: array
+          minItems: 1
+          maxItems: 100
+          items:
+            type: object
+            additionalProperties: false
+            required: [domain, path, browser, private_window, seconds]
+            properties:
+              domain:
+                type: string
+                minLength: 1
+                maxLength: 256
+              path:
+                type: [string, 'null']
+                pattern: '^/[^?#]*$'
+                maxLength: 512
+                description: The URL path, only at the `paths` level; never a query or fragment.
+              browser:
+                type: string
+                minLength: 1
+                maxLength: 256
+              private_window:
+                type: boolean
+              seconds:
+                type: integer
+                minimum: 1
+                maximum: 600
     SlotClosedEvent:
       description: >-
         One 10-minute activity slot, whose ID is the event ID, dated at the end of its window.

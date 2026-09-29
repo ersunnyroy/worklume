@@ -1,18 +1,20 @@
 //! A simulated device running the real agent core.
 
+use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Duration;
 
 use tempfile::TempDir;
 use uuid::Uuid;
 use worklume_core::timekeeper::{
-    IdlePolicy, KeepIdle, Outcome, Prompt, Timekeeper, TimekeeperError,
+    IdlePolicy, KeepIdle, Outcome, Prompt, Sensors, Timekeeper, TimekeeperError,
 };
 use worklume_core::tracker::{
     Activity, IdleResolution, InputMethod, TrackerConfig, TrackerError, TrackerState, WorkTarget,
 };
-use worklume_platform::ClockReading;
-use worklume_platform::fake::{FakeClock, FakeIdle, MemorySecretStore};
+use worklume_core::usage::{PrivateWindows, UsageLevel, UsagePolicy};
+use worklume_platform::fake::{FakeBrowser, FakeClock, FakeIdle, FakeWindow, MemorySecretStore};
+use worklume_platform::{BrowserTab, ClockReading, ForegroundApp, SensorError};
 use worklume_storage::{StorageError, Store};
 use worklume_sync::envelope;
 
@@ -37,6 +39,8 @@ pub struct DeviceConfig {
     pub tick: Duration,
     /// The idle policy the agent starts with.
     pub policy: IdlePolicy,
+    /// The app and URL policy the agent starts with.
+    pub usage: UsagePolicy,
 }
 
 impl Default for DeviceConfig {
@@ -47,7 +51,60 @@ impl Default for DeviceConfig {
                 timeout: Some(Duration::from_mins(5)),
                 keep: KeepIdle::Prompt,
             },
+            usage: UsagePolicy {
+                level: UsageLevel::Paths,
+                window_titles: true,
+                private_windows: PrivateWindows::DomainOnly,
+            },
         }
+    }
+}
+
+/// What the member has in front of them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Focus {
+    /// An editor, with a window title.
+    Editor,
+    /// A browser on site `n`, in a private window or not. Its address carries a query and a
+    /// fragment, which must never be kept.
+    Browser { site: u8, private: bool },
+    /// Nothing: the desktop.
+    Desktop,
+    /// An app the OS won't describe (a missing permission).
+    Unreadable,
+}
+
+/// The most detail any usage policy during a run allowed, so the most the server may receive,
+/// and the titles private windows showed, which it must never receive.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UsageAllowance {
+    pub level: UsageLevel,
+    pub window_titles: bool,
+    pub private_sites: bool,
+    pub private_titles: HashSet<String>,
+}
+
+impl Default for UsageAllowance {
+    fn default() -> Self {
+        Self::of(UsagePolicy::OFF)
+    }
+}
+
+impl UsageAllowance {
+    fn of(policy: UsagePolicy) -> Self {
+        Self {
+            level: policy.level,
+            window_titles: policy.window_titles,
+            private_sites: matches!(policy.private_windows, PrivateWindows::DomainOnly),
+            private_titles: HashSet::new(),
+        }
+    }
+
+    fn widen(&mut self, policy: UsagePolicy) {
+        let other = Self::of(policy);
+        self.level = self.level.max(other.level);
+        self.window_titles |= other.window_titles;
+        self.private_sites |= other.private_sites;
     }
 }
 
@@ -79,14 +136,21 @@ struct Agent {
     keeper: Timekeeper,
 }
 
+const EDITOR: &str = "com.microsoft.VSCode";
+const BROWSER: &str = "com.google.Chrome";
+
 /// A simulated device. See the crate documentation.
 pub struct Device {
     clock: Arc<FakeClock>,
     idle: Arc<FakeIdle>,
+    window: Arc<FakeWindow>,
+    browser: Arc<FakeBrowser>,
     secrets: MemorySecretStore,
     dir: TempDir,
     config: DeviceConfig,
     policy: IdlePolicy,
+    usage: UsagePolicy,
+    allowance: UsageAllowance,
     agent: Option<Agent>,
     down_since: Option<ClockReading>,
     untracked: Vec<Span>,
@@ -114,13 +178,19 @@ impl Device {
     pub fn new(config: DeviceConfig) -> Result<Self, SimError> {
         let clock = Arc::new(FakeClock::new(START_WALL_MS));
         let idle = Arc::new(FakeIdle::new(Arc::clone(&clock)));
+        let window = Arc::new(FakeWindow::default());
+        window.set(Some(editor()));
         let mut device = Self {
             clock,
             idle,
+            window,
+            browser: Arc::new(FakeBrowser::default()),
             secrets: MemorySecretStore::default(),
             dir: TempDir::new()?,
             config,
             policy: config.policy,
+            usage: config.usage,
+            allowance: UsageAllowance::of(config.usage),
             agent: None,
             down_since: None,
             untracked: Vec::new(),
@@ -319,13 +389,20 @@ impl Device {
     fn launch(&mut self) -> Result<(), SimError> {
         let (store, _) = Store::open(self.dir.path(), &self.secrets)?;
         let store = Arc::new(store);
-        let (keeper, recovery) = Timekeeper::open(
+        let sensors = Sensors {
+            clock: Arc::clone(&self.clock) as _,
+            idle: Arc::clone(&self.idle) as _,
+            window: Arc::clone(&self.window) as _,
+            browser: Arc::clone(&self.browser) as _,
+        };
+        let (mut keeper, recovery) = Timekeeper::open(
             Arc::clone(&store),
             TrackerConfig::new(InputMethod::Hooks),
-            Arc::clone(&self.clock) as _,
-            Arc::clone(&self.idle) as _,
+            sensors,
             self.policy,
         )?;
+        // The configuration is applied at every launch (E09-S06).
+        keeper.set_usage_policy(self.usage);
         let now = self.clock.reading();
         if let Some(down) = self.down_since.take()
             && down.boot_id == now.boot_id
@@ -422,6 +499,58 @@ impl Device {
             agent.keeper.set_policy(policy);
         }
         self.note(format!("policy {policy:?}"));
+    }
+
+    /// Replaces the app and URL policy, as a config update would (E09-S06).
+    pub fn set_usage_policy(&mut self, policy: UsagePolicy) {
+        self.usage = policy;
+        self.allowance.widen(policy);
+        if let Some(agent) = self.agent.as_mut() {
+            agent.keeper.set_usage_policy(policy);
+        }
+        self.note(format!("usage policy {policy:?}"));
+    }
+
+    /// The most detail any usage policy during the run allowed.
+    #[must_use]
+    pub const fn usage_allowance(&self) -> &UsageAllowance {
+        &self.allowance
+    }
+
+    /// Puts something else in front of the member.
+    pub fn focus(&mut self, focus: Focus) {
+        self.window.set_error(None);
+        match focus {
+            Focus::Editor => self.window.set(Some(editor())),
+            Focus::Browser { site, private } => {
+                let title = if private {
+                    format!("Private: site {site} - Google Chrome")
+                } else {
+                    format!("Site {site} - Google Chrome")
+                };
+                if private {
+                    self.allowance.private_titles.insert(title.clone());
+                }
+                self.window.set(Some(ForegroundApp {
+                    identifier: BROWSER.to_owned(),
+                    name: "Google Chrome".to_owned(),
+                    title: Some(title),
+                }));
+                self.browser.set(
+                    BROWSER,
+                    Some(BrowserTab {
+                        browser: "Chrome".to_owned(),
+                        url: format!(
+                            "https://app.site{site}.example.co.uk/page/{site}?session=secret#top"
+                        ),
+                        private,
+                    }),
+                );
+            }
+            Focus::Desktop => self.window.set(None),
+            Focus::Unreadable => self.window.set_error(Some(SensorError::PermissionDenied)),
+        }
+        self.note(format!("focus {focus:?}"));
     }
 
     /// The member's action: done, refused (`false`), or failed.
@@ -528,6 +657,14 @@ impl Device {
         self.network.set_online(true);
         self.network.lose_responses(0);
         self.sync()
+    }
+}
+
+fn editor() -> ForegroundApp {
+    ForegroundApp {
+        identifier: EDITOR.to_owned(),
+        name: "Visual Studio Code".to_owned(),
+        title: Some("main.rs — worklume".to_owned()),
     }
 }
 

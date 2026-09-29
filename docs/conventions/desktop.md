@@ -397,6 +397,60 @@ most.
 - A real sleep can't happen in CI, so sleep detection on real hardware belongs in the release
   test matrix.
 
+## App and URL usage
+
+E09-S12: `worklume-core::usage`, with the `ActiveWindow` and `BrowserUrl` traits in
+`worklume-platform`. It records what the member had in front of them while the timer ran,
+per 10-minute slot, reduced to what the organization allows before anything is stored.
+
+**Levels** (`UsagePolicy`, from the agent's configuration, E09-S06; `OFF` until it arrives):
+
+| Level     | Kept                                                                                 |
+| --------- | ------------------------------------------------------------------------------------ |
+| `off`     | Nothing, and no sensor is read                                                       |
+| `apps`    | The foreground app: identifier, name                                                 |
+| `domains` | Also the website, as its registrable domain (`mail.example.co.uk` → `example.co.uk`) |
+| `paths`   | Also the URL path                                                                    |
+
+- **Never kept:** query strings, fragments, credentials, addresses that aren't web pages
+  (`file:`, `chrome:`, `about:`…), and a private window's title or path.
+- **Window titles:** only when the organization turns them on (off by default, ADR-014).
+- **Private windows:** keep their domain only, or nothing, by policy (the acceptance
+  criterion). The browser still counts as the app in front.
+- **Domains:** reduced on the device with the Public Suffix List (the `psl` crate, compiled
+  in). A host with no public suffix (`localhost`, intranet names) or an IP address is kept
+  whole. Internationalised names are kept in their ASCII (punycode) form.
+- **Limits:** titles are cut at 256 characters and paths at 512. Each slot keeps up to 50
+  distinct apps and 50 sites in full detail. Beyond that, a new one loses its title or path
+  and merges with the same app or site, up to 100 records.
+
+**Only what's kept is read.** The window title is asked for only when titles are on. The
+browser tab is read from `domains` up, and also at `apps` when titles are on, to learn
+whether the window is private. A tab that can't be read counts as private, so its title is
+dropped. An unreadable foreground app records nothing for that tick; tracking goes on.
+
+**When usage counts.** Only while the timer runs and the member isn't idle. The timekeeper
+reads the sensors only then, and the tracker also leaves idle time out.
+
+**Stored with the slot.** Usage is tallied in the tracker's open slots, so it is part of the
+journal snapshot and survives a crash like the slot's time. When a slot closes, it is followed
+in the same transaction by an `app_usage.batch` and a `url_usage.batch`, sent only when not
+empty. Each references the slot by `slot_id`, and holds whole seconds per record, rounded down,
+so usage never exceeds the slot.
+
+**Contract.** Both event types are in `packages/api-contract/openapi.yaml`. They state the
+server's duties (E16-S02): catalog matching, re-applying the member's current policy, and who
+may read the data (`activity.view_apps`, `activity.view_urls`).
+
+**Open decision.** The data model keeps websites as registrable domains, so `docs.google.com`
+and `mail.google.com` both become `google.com`, even at the `paths` level. The agent follows
+the model. Whether to keep the host as well is for E16-S01 to decide.
+
+**Tested.** `core/tests/usage.rs` covers each level, titles, private windows, non-web
+addresses, idle, switching apps, unreadable sensors, a restart, many titles and
+project switches. `usage::tests` covers URL reduction. The simulation harness checks usage in
+every generated script. Mutation checks: 10 of 10 caught.
+
 ## Simulation harness
 
 E09-S14: `apps/desktop/simulation` (`worklume-simulation`) runs the real agent core on a
@@ -435,6 +489,10 @@ slots, and reports:
 - a break while tracking;
 - a second slot for a window, a slot outside 1–600 s or not on a 10-minute boundary;
 - slots that disagree with the entries by more than a second;
+- a usage batch with no slot before it, a second batch for a slot, or more usage than the slot
+  tracked;
+- usage detail beyond the most any policy in the run allowed: titles or paths when none was
+  allowed, a private window's title or path, or a query or fragment in a path;
 - anything left open at the end, or events that never reached the server.
 
 `tests/checker.rs` damages a clean day in each of these ways and expects the report, so the
@@ -450,7 +508,9 @@ checker can't pass everything by accident.
 - a reboot.
 
 **Generated scripts** (`tests/properties.rs`): proptest builds scripts of up to 40 random
-steps under a random idle policy, and shrinks a failure to a short script. The report prints
+steps under random idle and usage policies, with the member switching between an editor,
+browser tabs (some private), the desktop and an app the OS won't describe. It shrinks a failure
+to a short script. The report prints
 the script and a log of what happened. `PROPTEST_CASES` sets the count: 64 locally, 256 in CI.
 10,000 passed before merging.
 
@@ -462,6 +522,8 @@ the script and a log of what happened. `PROPTEST_CASES` sets the count: 64 local
 - A `stop` decision after a restart split the entry left the server's new entry open; the
   contract now says an idle period spans such splits. Idle time before a sleep could also
   begin before the entry, giving an empty idle period and a pointless question.
+- (E09-S12) At the `apps` level with titles on, a private window's title was kept, because
+  the tab wasn't read below `domains`.
 
 **CI.** The `Desktop simulation (Linux)` job in `ci.yml` runs the harness on every pull request,
 whatever it changes: the scenarios, the checker tests and 256 generated scripts. The Desktop
@@ -545,6 +607,8 @@ the CLI and the crates together.
   shows the idle dialog.
 - Idle source adapters, and session lock and unlock through `PowerEvents`: the per-OS input
   stories (E10-S03, E11-S03, E12-S03, E13-S04).
+- Foreground-app and browser-tab readers: the per-OS window and URL stories. Each browser
+  reader must report private windows for every browser it can read.
 - The simulation harness drives the real sync engine and the offline property tests of E08-S10
   once they exist (E09-S05).
 - A monochrome template tray icon for the macOS menu bar: E10-S07.

@@ -7,6 +7,8 @@
     reason = "helpers in a test crate fail the test on bad setup"
 )]
 
+pub mod rig;
+
 use std::sync::Arc;
 
 use serde_json::Value;
