@@ -23,6 +23,7 @@ sign-in and the agent UI arrive (E09-S03, E09-S09).
 | `storage/`                         | `worklume-storage`: SQLCipher journal and outbox, encrypted spool      |
 | `storage/migrations/`              | Local schema migrations, applied in order, append-only                 |
 | `sync/`                            | `worklume-sync`: outbox drain and uploads (E09-S05)                    |
+| `simulation/`                      | `worklume-simulation`: simulated device, fake server, invariant checks |
 | `platform/`                        | `worklume-platform`: OS traits; credential store, clock, idle source   |
 | `scripts/`                         | Crate dependency rules, checked on every lint                          |
 | `src-tauri/icons/`, `icon.svg`     | App icons, generated from `icon.svg`                                   |

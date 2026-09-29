@@ -269,7 +269,10 @@ Until then both run in tests against controllable clocks.
 - On restart, `Tracker::open` restores the snapshot. If time was counting, the entry closes at
   the snapshot (reason `agent_restart`), a new one opens (trigger `restart`) and the timer
   carries on. `Recovery` reports the unaccounted time.
-- After a reboot, slots from the old boot close at once and are dated in that boot.
+- After a reboot, derived time re-anchors to the wall clock, but never before the last
+  accounted moment, so no 10-minute window comes around twice, even when the clock was set back
+  while the device was off (the slot is flagged `clock_adjusted`). Open slots stay open: if the
+  new boot lands in the same window, it adds to the same slot, dated in the new boot.
 
 **Slots.**
 
@@ -294,6 +297,9 @@ Until then both run in tests against controllable clocks.
 - Idle resolutions are applied by the server, as `POST /v1/idle-periods/{id}/resolve` would, so
   a resolution made on the web cannot double-count. `decided_by` says whether the member or the
   keep-idle policy decided, and the server checks the decision against the member's policy.
+- An idle period covers all tracked time from its start until the decision. When a restart or
+  a gap splits the entry meanwhile, it carries on into the new entry, and a `stop` decision
+  ends whichever entry is open.
 - The server's `timers.stop_reason` needs the agent's reasons: `sleep`, `session_locked`,
   `break`, `gap` and `agent_restart` (E07-S03, E08-S10).
 
@@ -354,8 +360,8 @@ is the inactivity before the sleep plus the sleep itself.
 
 - Shorter than the idle timeout: the timer resumes in a new entry.
 - Longer: the timer waits for the member, who is asked once.
-  - Inactivity of a second or more before the sleep becomes idle time awaiting a decision, and
-    answering it also resumes the timer, unless the answer is `stop`.
+  - Inactivity of a second or more before the sleep, inside the entry, becomes idle time
+    awaiting a decision. Answering it also resumes the timer, unless the answer is `stop`.
   - Otherwise the only question is whether to resume.
   - If idle time was already awaiting a decision, that question stands; it is not asked again.
 
@@ -390,6 +396,81 @@ most.
 - `platform/tests/os_clock.rs` checks the real clocks on each OS in CI.
 - A real sleep can't happen in CI, so sleep detection on real hardware belongs in the release
   test matrix.
+
+## Simulation harness
+
+E09-S14: `apps/desktop/simulation` (`worklume-simulation`) runs the real agent core on a
+simulated device. Its scripted and generated scenarios check the agent end to end, from the
+store to what the server received.
+
+**The device.** A `Device` runs the real `Timekeeper`, tracker and encrypted store in a
+temporary folder, on `FakeClock`, `FakeIdle` and `MemorySecretStore`. It can:
+
+- work (input every tick), be away, or sleep;
+- have its wall clock moved, or reboot;
+- lose its agent to a crash, including in the middle of a store write (the store's
+  `fault-injection` feature). The watchdog's one-second restart is modelled.
+- go offline, or lose sync answers after the server applied a batch.
+
+It records when it slept or ran no agent, in monotonic time. The member's actions go through
+the timekeeper as the UI's would; actions refused in the current state are logged and skipped,
+like a disabled button.
+
+**The server.** `FakeServer` stores each event once by `event_id`, reports repeats as
+duplicates, and flags a reused ID or a `seq` out of order. The sync engine (E09-S05) doesn't
+exist yet, so `Device::sync` stands in for it: ordered batches of up to 500 events, deleted
+from the outbox only once the server answered. The real engine replaces this when it arrives.
+
+**The checker.** `check` folds what the server stored into entries, idle periods, breaks and
+slots, and reports:
+
+- a `seq` gap, or a repeated event ID;
+- an event whose wall time isn't its boot's monotonic time plus one fixed offset (a clock
+  change leaking into event times);
+- two open entries, a stop for an entry that isn't open, or an entry ending in another boot or
+  before it began;
+- any entry overlapping a sleep or a stretch with no agent;
+- an idle period outside its entry, resolved twice, overlapping another, or ended by a pause
+  with less than a second in it;
+- a break while tracking;
+- a second slot for a window, a slot outside 1–600 s or not on a 10-minute boundary;
+- slots that disagree with the entries by more than a second;
+- anything left open at the end, or events that never reached the server.
+
+`tests/checker.rs` damages a clean day in each of these ways and expects the report, so the
+checker can't pass everything by accident.
+
+**Scenarios** (`tests/scenarios.rs`):
+
+- a working day;
+- a week offline that arrives complete and once, even when answers are lost;
+- a sleep under each keep-idle policy;
+- clock changes;
+- crashes, including one mid-write;
+- a reboot.
+
+**Generated scripts** (`tests/properties.rs`): proptest builds scripts of up to 40 random
+steps under a random idle policy, and shrinks a failure to a short script. The report prints
+the script and a log of what happened. `PROPTEST_CASES` sets the count: 64 locally, 256 in CI.
+10,000 passed before merging.
+
+**What it found.** Three defects that the unit tests had missed, fixed with the harness:
+
+- After a reboot within the same 10-minute window, the tracker sent a second slot for that
+  window. The server's unique key would have refused it.
+- A clock set back while the device was off could repeat windows the same way.
+- A `stop` decision after a restart split the entry left the server's new entry open; the
+  contract now says an idle period spans such splits. Idle time before a sleep could also
+  begin before the entry, giving an empty idle period and a pointless question.
+
+**CI.** The `Desktop simulation (Linux)` job in `ci.yml` runs the harness on every pull request,
+whatever it changes: the scenarios, the checker tests and 256 generated scripts. The Desktop
+workflow runs everything on three OSes when desktop code or the API contract changes.
+
+**Boundaries.** The harness turns on test-only features (the platform fakes and store fault
+injection) as normal dependencies. The crate-boundary rules therefore let nothing depend on it
+except as a dev-dependency. The installers build only the shell's dependency tree, so those
+features never reach the app.
 
 ## Rust tasks in Turborepo
 
@@ -464,6 +545,8 @@ the CLI and the crates together.
   shows the idle dialog.
 - Idle source adapters, and session lock and unlock through `PowerEvents`: the per-OS input
   stories (E10-S03, E11-S03, E12-S03, E13-S04).
+- The simulation harness drives the real sync engine and the offline property tests of E08-S10
+  once they exist (E09-S05).
 - A monochrome template tray icon for the macOS menu bar: E10-S07.
 - Code signing, notarisation and the updater: E09-S10 and E10–E13. The updater restarts the
   agent through exit code 75, so the watchdog stays in charge.

@@ -1,5 +1,6 @@
 # Checks every pull request and every push to main (E00-S04, first part).
-# The desktop and mobile native builds run in their own workflows when those apps change.
+# The desktop and mobile native builds run in their own workflows when those apps change; the
+# desktop simulation harness runs here on every pull request.
 # API image builds and deploys to dev arrive once the API (E00-S02) and infrastructure
 # (E00-S03) exist.
 name: CI
@@ -91,6 +92,33 @@ jobs:
           path: apps/web/playwright-report/
           if-no-files-found: ignore
           retention-days: 7
+
+  # The desktop simulation harness (E09-S14) on every pull request, whatever it touches, so
+  # the agent core's invariants are checked even when the Desktop workflow's path filter skips
+  # it. Linux only; the Desktop workflow covers macOS and Windows.
+  simulation:
+    name: Desktop simulation (Linux)
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # The platform crate links libdbus for the Linux credential store.
+      - name: Install Linux build libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libdbus-1-dev pkg-config
+      - name: Install the pinned Rust toolchain
+        run: rustup toolchain install
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          key: simulation
+      - name: Scenarios, checker tests and 256 generated scripts
+        env:
+          PROPTEST_CASES: '256'
+        run: cargo test -p worklume-simulation --locked
 
   security:
     name: Security scans

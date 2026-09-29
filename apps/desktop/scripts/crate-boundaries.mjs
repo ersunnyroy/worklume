@@ -11,6 +11,13 @@ export const allowedWorkspaceDependencies = {
   'worklume-core': ['worklume-platform', 'worklume-storage'],
   'worklume-sync': ['worklume-core', 'worklume-platform', 'worklume-storage'],
   'worklume-desktop': ['worklume-core', 'worklume-platform', 'worklume-storage', 'worklume-sync'],
+  // Test support: listed nowhere else, so no crate can depend on it except for its tests.
+  'worklume-simulation': [
+    'worklume-core',
+    'worklume-platform',
+    'worklume-storage',
+    'worklume-sync',
+  ],
 };
 
 /** External crates that only one layer may use directly. */
