@@ -18,6 +18,10 @@
 //! **Restarts.** [`Tracker::open`] restores the last snapshot. If time was counting, the entry
 //! is closed at the snapshot and a new one opens now: time between the two is unaccounted, and
 //! the timer carries on.
+//!
+//! **Reboots.** A new boot re-anchors derived time to the wall clock, but never before the last
+//! accounted moment, so no 10-minute window comes around twice. Open slots stay open across the
+//! reboot: if the new boot lands in the same window, it adds to the same slot.
 
 mod events;
 mod slots;
@@ -131,8 +135,15 @@ impl Core {
         let anchor = match &self.anchor {
             Some(anchor) if !rebooted => anchor.clone(),
             _ => {
-                self.anchor = Some(raw.clone());
-                raw.clone()
+                // A new boot anchors to the device's wall clock, but never before time already
+                // accounted, so a clock set back while the device was off cannot bring a
+                // 10-minute window around twice.
+                let mut anchor = raw.clone();
+                if let Some(last) = &self.last_tick {
+                    anchor.wall_ms = anchor.wall_ms.max(last.wall_ms);
+                }
+                self.anchor = Some(anchor.clone());
+                anchor
             }
         };
         let elapsed = (raw.mono_ms - anchor.mono_ms).max(0);
@@ -157,10 +168,9 @@ impl Core {
     ) -> Result<Moment, TrackerError> {
         let (current, rebooted, jumped) = self.observe(now, config);
         let last = self.last_tick.take();
-        if rebooted {
-            // Time cannot be measured across a reboot; recovery handles the timer itself.
-            self.slots.close_all(config.input_method, out)?;
-        } else if let (Some(last), Some(entry)) = (last, self.state.entry().cloned()) {
+        // Time cannot be measured across a reboot; recovery handles the timer itself. Open
+        // slots stay open: the new boot may carry on in the same window.
+        if !rebooted && let (Some(last), Some(entry)) = (last, self.state.entry().cloned()) {
             let elapsed = u64::try_from(current.mono_ms - last.mono_ms).unwrap_or(0);
             let max_gap = u64::try_from(config.max_tick_gap.as_millis()).unwrap_or(u64::MAX);
             if elapsed > max_gap {
@@ -270,8 +280,9 @@ impl Tracker {
         let restored = snapshot_id.is_some();
 
         let mut out = Vec::new();
-        let last = core.last_tick.take();
+        // Observed while the last tick is known, which a new boot's anchor must not precede.
         let (current, rebooted, _) = core.observe(now, &config);
+        let last = core.last_tick.take();
         let resumed_tracking = core.state.is_tracking() && last.is_some();
         let unaccounted_ms = last.as_ref().and_then(|last| {
             (!rebooted && last.boot_id == current.boot_id)
@@ -288,12 +299,8 @@ impl Tracker {
                 &mut out,
             )?;
         }
-        if rebooted {
-            core.slots.close_all(config.input_method, &mut out)?;
-        } else {
-            core.slots
-                .close_due(current.wall_ms, config.input_method, &mut out)?;
-        }
+        core.slots
+            .close_due(current.wall_ms, config.input_method, &mut out)?;
         core.last_tick = Some(current.clone());
 
         let mut tracker = Self {

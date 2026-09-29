@@ -227,7 +227,11 @@ impl Slots {
             .iter()
             .position(|slot| slot.window_start == window_start)
             .unwrap_or(0);
-        &mut self.open[index]
+        let slot = &mut self.open[index];
+        // A slot that outlived a reboot is dated in the boot that last added to it.
+        slot.boot_id.clone_from(&anchor.boot_id);
+        slot.wall_to_mono = anchor.mono_ms - anchor.wall_ms;
+        slot
     }
 
     /// Closes, in order, every slot whose window ended by `wall_ms`.
@@ -243,19 +247,6 @@ impl Slots {
             .is_some_and(|slot| slot.window_start + SLOT_MS <= wall_ms)
         {
             let slot = self.open.remove(0);
-            self.close(&slot, input_method, out)?;
-        }
-        Ok(())
-    }
-
-    /// Closes every open slot, whether or not its window has ended (after a reboot, when time
-    /// can no longer be compared with the slots' boot).
-    pub(crate) fn close_all(
-        &mut self,
-        input_method: InputMethod,
-        out: &mut Vec<NewEvent>,
-    ) -> Result<(), TrackerError> {
-        for slot in std::mem::take(&mut self.open) {
             self.close(&slot, input_method, out)?;
         }
         Ok(())

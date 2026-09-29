@@ -93,31 +93,78 @@ fn a_restart_while_paused_or_on_a_break_keeps_the_state() {
 }
 
 #[test]
-fn a_reboot_closes_open_slots_at_once() {
+fn a_reboot_within_the_window_adds_to_the_same_slot() {
     let mut harness = Harness::new();
     let mut tracker = harness.tracker();
     tracker.start(target(1), &harness.clock.now()).unwrap();
     harness.pass(&mut tracker, 90);
     drop(tracker);
-    // The device restarts: a new boot, and back within the same window.
+    // The device restarts: a new boot, and back within the same window at 14:05:30.
     harness.clock.reboot(60_000);
 
-    let (tracker, recovery) = reopen(&mut harness);
+    let (mut tracker, recovery) = reopen(&mut harness);
     assert_eq!(
         recovery.unaccounted_ms, None,
         "time across a reboot cannot be measured"
     );
     assert!(recovery.resumed_tracking);
-    let slot = harness.events_of("slot.closed").remove(0);
-    assert_eq!(seconds(&slot, "tracked_seconds"), 90);
-    assert_eq!(
-        slot.time.boot_id(),
-        "boot-1",
-        "dated in the boot it belongs to"
+    assert!(
+        harness.events_of("slot.closed").is_empty(),
+        "the window is still open"
     );
     let restarted = harness.events_of("timer.started").remove(1);
     assert_eq!(restarted.time.boot_id(), "boot-1-next");
-    assert!(tracker.state().is_tracking());
+
+    harness.pass(&mut tracker, 271);
+    let slots = harness.events_of("slot.closed");
+    assert_eq!(slots.len(), 1, "one slot for the window");
+    assert_eq!(seconds(&slots[0], "tracked_seconds"), 90 + 270);
+    assert_eq!(
+        slots[0].time.boot_id(),
+        "boot-1-next",
+        "dated in the boot that last added to it"
+    );
+    assert_eq!(
+        uuid(&slots[0].payload["time_entry_id"]),
+        *restarted.event_id.as_uuid(),
+        "owned by the entry with the most time in it"
+    );
+}
+
+#[test]
+fn a_clock_set_back_across_a_reboot_never_repeats_a_window() {
+    let mut harness = Harness::new();
+    let mut tracker = harness.tracker();
+    tracker.start(target(1), &harness.clock.now()).unwrap();
+    // 14:03 to 14:12: the 14:00 slot closes at 14:10.
+    let last = harness.pass(&mut tracker, 540);
+    drop(tracker);
+    // The device restarts with its clock twenty minutes slow.
+    harness.clock.reboot(60_000);
+    harness.clock.set_wall_by(-20 * 60_000);
+
+    let (mut tracker, _) = reopen(&mut harness);
+    let restarted = harness.events_of("timer.started").remove(1);
+    assert_eq!(
+        restarted.time.wall_ms(),
+        last.wall_ms(),
+        "derived time resumes where it stopped, not at the slow clock"
+    );
+    harness.pass(&mut tracker, 600);
+
+    let slots = harness.events_of("slot.closed");
+    let windows: Vec<_> = slots
+        .iter()
+        .map(|slot| slot.payload["slot_start"].as_str().unwrap().to_owned())
+        .collect();
+    assert_eq!(windows, ["2026-09-21T14:00:00Z", "2026-09-21T14:10:00Z"]);
+    assert_eq!(seconds(&slots[1], "tracked_seconds"), 600);
+    assert!(
+        slots[1].payload["flags"]
+            .as_array()
+            .unwrap()
+            .contains(&serde_json::json!("clock_adjusted"))
+    );
 }
 
 #[test]
@@ -136,8 +183,6 @@ fn a_monotonic_clock_that_went_back_is_a_new_boot() {
         recovery.unaccounted_ms, None,
         "time across a reboot cannot be measured"
     );
-    let slot = harness.events_of("slot.closed").remove(0);
-    assert_eq!(seconds(&slot, "tracked_seconds"), 90);
     let restarted = harness.events_of("timer.started").remove(1);
     assert_eq!(
         restarted.time.wall_ms(),
