@@ -1,0 +1,77 @@
+@import 'tailwindcss';
+
+/*
+ * Colour tokens. Light and dark values each meet WCAG 2.2 AA contrast for text on the
+ * canvas and surface colours; the Playwright axe check verifies this in both schemes.
+ */
+:root {
+  --wl-canvas: #f6f7f9;
+  --wl-surface: #ffffff;
+  --wl-ink: #1a1f24;
+  --wl-muted: #4a5560;
+  --wl-line: #d5dbe1;
+  --wl-brand: #1f5f8b;
+  --wl-brand-ink: #ffffff;
+  --wl-warning: #fde68a;
+  --wl-warning-ink: #5c3d00;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --wl-canvas: #0e1216;
+    --wl-surface: #161b21;
+    --wl-ink: #e8ecef;
+    --wl-muted: #a9b4bf;
+    --wl-line: #2a323b;
+    --wl-brand: #6cb2e4;
+    --wl-brand-ink: #0e1216;
+  }
+}
+
+@theme inline {
+  --color-canvas: var(--wl-canvas);
+  --color-surface: var(--wl-surface);
+  --color-ink: var(--wl-ink);
+  --color-muted: var(--wl-muted);
+  --color-line: var(--wl-line);
+  --color-brand: var(--wl-brand);
+  --color-brand-ink: var(--wl-brand-ink);
+  --color-warning: var(--wl-warning);
+  --color-warning-ink: var(--wl-warning-ink);
+}
+
+@layer base {
+  html {
+    color-scheme: light dark;
+  }
+
+  body {
+    @apply bg-canvas text-ink antialiased;
+  }
+
+  :focus-visible {
+    @apply outline-2 outline-offset-2 outline-brand;
+  }
+}
+
+@layer components {
+  .skip-link {
+    @apply sr-only rounded-md bg-surface px-4 py-2 font-medium focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-50;
+  }
+
+  .nav-link {
+    @apply block rounded-md px-3 py-2 text-muted hover:bg-canvas hover:text-ink;
+  }
+
+  .nav-link[aria-current='page'] {
+    @apply bg-canvas font-medium text-ink;
+  }
+
+  .button-primary {
+    @apply inline-flex items-center rounded-md bg-brand px-4 py-2 font-medium text-brand-ink hover:opacity-90;
+  }
+
+  .icon-button {
+    @apply inline-flex size-9 items-center justify-center rounded-md text-muted hover:bg-canvas hover:text-ink;
+  }
+}

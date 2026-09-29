@@ -1,0 +1,52 @@
+{
+  "name": "@worklume/web",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Worklume web app: the signed-in single-page app served from S3 and CloudFront.",
+  "license": "UNLICENSED",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build && node scripts/check-bundle-size.mjs",
+    "preview": "vite preview",
+    "lint": "eslint --max-warnings=0 .",
+    "typecheck": "tsc -b",
+    "test": "vitest run",
+    "test:e2e": "playwright test"
+  },
+  "dependencies": {
+    "@tanstack/react-query": "5.103.1",
+    "@tanstack/react-router": "1.170.38",
+    "i18next": "26.4.2",
+    "radix-ui": "1.6.7",
+    "react": "19.3.0",
+    "react-dom": "19.3.0",
+    "react-i18next": "17.0.14",
+    "zod": "4.6.5"
+  },
+  "devDependencies": {
+    "@axe-core/playwright": "4.13.0",
+    "@playwright/test": "1.63.0",
+    "@tailwindcss/vite": "4.3.3",
+    "@tanstack/eslint-plugin-query": "5.103.1",
+    "@tanstack/eslint-plugin-router": "1.162.0",
+    "@tanstack/router-plugin": "1.168.40",
+    "@testing-library/dom": "10.4.2",
+    "@testing-library/jest-dom": "7.0.1",
+    "@testing-library/react": "16.3.3",
+    "@testing-library/user-event": "14.6.7",
+    "@types/node": "22.20.4",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "@vitejs/plugin-react": "6.1.1",
+    "@worklume/eslint-config": "workspace:*",
+    "@worklume/tsconfig": "workspace:*",
+    "axe-core": "4.13.0",
+    "eslint": "10.11.0",
+    "jsdom": "30.1.0",
+    "tailwindcss": "4.3.3",
+    "typescript": "6.0.3",
+    "vite": "8.3.0",
+    "vitest": "5.0.1"
+  }
+}

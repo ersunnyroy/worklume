@@ -29,7 +29,8 @@ performance review → document → commit. Tests are never skipped.
   relationship. Every feature ships tenant-isolation tests.
 - **API:** every endpoint defines authentication, authorization, validation, rate limiting
   where appropriate, problem+json errors, logging, idempotency where it has side effects, and
-  tests.
+  tests. Describe it in `packages/api-contract/openapi.yaml` first; Spectral enforces the
+  conventions and the client is generated from it.
 - **Database:** foreign keys, indexes, unique and check constraints, transactions and the
   right isolation level. Integrity is enforced in the database, not only in code.
 - **Desktop agent:** works offline, recovers from crashes, queues and retries events safely
@@ -54,5 +55,5 @@ performance review → document → commit. Tests are never skipped.
 
 ## Commands
 
-`pnpm install`, then `pnpm check` (format, lint, typecheck, test, build). See `README.md` and
-`CONTRIBUTING.md` for the rest.
+`pnpm install`, then `pnpm check` (format, lint, typecheck, test, build) and `pnpm test:e2e`
+(browser smoke tests). See `README.md` and `CONTRIBUTING.md` for the rest.

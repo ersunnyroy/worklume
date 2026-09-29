@@ -1,0 +1,10 @@
+{
+  "extends": ["expo/tsconfig.base", "@worklume/tsconfig/base.json"],
+  "compilerOptions": {
+    "jsx": "react-jsx",
+    "lib": ["ES2023"],
+    "module": "preserve",
+    "types": ["jest"]
+  },
+  "include": ["index.ts", "app.config.ts", "src"]
+}

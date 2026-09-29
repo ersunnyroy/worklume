@@ -1,0 +1,587 @@
+openapi: 3.1.1
+info:
+  title: Worklume API
+  version: 1.0.0
+  summary: The single REST API behind the web app, the mobile app, the desktop agent and integrations.
+  description: |
+    Contract-first: this document is the source of truth. The API implements it, clients are
+    generated from it, and CI fails when the two drift apart.
+
+    Conventions that apply to every operation are described once, in the architecture's API
+    catalog (`docs/planning/phase-2-api.md`), and enforced by the Spectral rules in this package:
+
+    - The organization is always taken from the access token. No tenant operation accepts an
+      organization ID from the client.
+    - JSON bodies use `snake_case`; timestamps are UTC ISO 8601.
+    - Errors are RFC 9457 problem details (`application/problem+json`) with a stable `code` and
+      the `request_id` to quote to support.
+  contact:
+    name: Worklume engineering
+  license:
+    name: Proprietary
+    identifier: LicenseRef-Proprietary
+servers:
+  - url: https://api.worklume.com
+    description: Production
+  - url: http://localhost:8000
+    description: Local development
+tags:
+  - name: Platform
+    description: Service health, used by load balancers and uptime checks.
+  - name: Desktop
+    description: |
+      The agent protocol (`/v1/desktop/*`), served by the ingest service. Calls need a
+      DPoP-bound device token whose device is active and belongs to the token's member.
+security:
+  - bearerAuth: []
+paths:
+  /health:
+    x-worklume-unversioned: true
+    get:
+      operationId: getHealth
+      tags: [Platform]
+      summary: Liveness check
+      description: |
+        Answers as long as the process can serve requests. It checks no dependencies, so a
+        failing database never makes the load balancer restart healthy API processes.
+      security: []
+      responses:
+        '200':
+          description: The process is running.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthStatus'
+              example:
+                status: ok
+        default:
+          $ref: '#/components/responses/Problem'
+  /ready:
+    x-worklume-unversioned: true
+    get:
+      operationId: getReadiness
+      tags: [Platform]
+      summary: Readiness check
+      description: |
+        Answers 200 only when the API can serve traffic: the database and cache respond. The
+        response never names the failing dependency, because this endpoint is reachable without
+        authentication.
+      security: []
+      responses:
+        '200':
+          description: Ready to serve traffic.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReadinessStatus'
+              example:
+                status: ready
+        '503':
+          description: A dependency is unavailable; the load balancer should route elsewhere.
+          headers:
+            Retry-After:
+              $ref: '#/components/headers/RetryAfter'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+              example:
+                type: https://docs.worklume.com/errors/service_unavailable
+                title: Service unavailable
+                status: 503
+                code: service_unavailable
+                request_id: 0192f0a4-7c1e-7d3a-9b2f-5d8e6a4c3b21
+        default:
+          $ref: '#/components/responses/Problem'
+  /v1/desktop/sync:
+    post:
+      operationId: syncDesktopEvents
+      tags: [Desktop]
+      summary: Upload a batch of outbox events
+      description: |
+        The agent sends its outbox in `seq` order, up to 500 events or 5 MB per batch, and
+        deletes events only once they are acknowledged (`accepted` or `duplicate`). The server
+        applies events in `seq` order inside one transaction per member and answers per event.
+
+        Retries are safe twice over: the server replays its stored response for a `batch_id` it
+        has seen, and inserts use each `event_id` as the key, so a repeated event is reported as
+        `duplicate`.
+
+        Every ID in an event comes from the device, so the server checks each one: projects and
+        tasks must be assigned to the member, and time entries, idle periods and breaks must
+        belong to this device. The organization always comes from the token.
+
+        The server's obligations for each event type are in the event schemas' descriptions.
+      x-worklume-idempotency: client-id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DesktopSyncBatch'
+      responses:
+        '200':
+          description: The batch was processed; each event has a verdict.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DesktopSyncResult'
+        '413':
+          $ref: '#/components/responses/Problem'
+        '422':
+          $ref: '#/components/responses/Problem'
+        default:
+          $ref: '#/components/responses/Problem'
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: |
+        Access token (15 minutes), bound to one organization. Desktop and mobile clients also
+        send a `DPoP` proof header (RFC 9449).
+  headers:
+    RetryAfter:
+      description: Seconds to wait before retrying.
+      schema:
+        type: integer
+        minimum: 0
+  responses:
+    Problem:
+      description: An error, described as RFC 9457 problem details.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+  schemas:
+    HealthStatus:
+      type: object
+      additionalProperties: false
+      required: [status]
+      properties:
+        status:
+          type: string
+          const: ok
+    ReadinessStatus:
+      type: object
+      additionalProperties: false
+      required: [status]
+      properties:
+        status:
+          type: string
+          const: ready
+    Problem:
+      type: object
+      description: RFC 9457 problem details, extended with a stable code and the request ID.
+      required: [type, title, status, code, request_id]
+      properties:
+        type:
+          type: string
+          format: uri
+          description: Documentation URL for this kind of error.
+        title:
+          type: string
+          description: Short, human-readable summary that does not change between occurrences.
+        status:
+          type: integer
+          minimum: 400
+          maximum: 599
+        code:
+          type: string
+          pattern: '^[a-z][a-z0-9_]*$'
+          description: Stable, machine-readable error code, such as `validation_failed`.
+        detail:
+          type: string
+          description: Explanation of this occurrence. Never contains stack traces or internals.
+        errors:
+          type: array
+          description: Per-field validation errors, present for `validation_failed`.
+          items:
+            $ref: '#/components/schemas/FieldError'
+        request_id:
+          type: string
+          description: Identifier of the request, to quote when contacting support.
+    FieldError:
+      type: object
+      additionalProperties: false
+      required: [field, code, message]
+      properties:
+        field:
+          type: string
+          description: Path of the invalid field in the request, such as `ended_at`.
+        code:
+          type: string
+          pattern: '^[a-z][a-z0-9_]*$'
+        message:
+          type: string
+    DesktopSyncBatch:
+      type: object
+      additionalProperties: false
+      required: [batch_id, first_seq, last_seq, events]
+      properties:
+        batch_id:
+          type: string
+          format: uuid
+          description: Chosen by the agent and kept for every retry of this batch.
+        first_seq:
+          type: integer
+          minimum: 1
+        last_seq:
+          type: integer
+          minimum: 1
+        events:
+          type: array
+          minItems: 1
+          maxItems: 500
+          items:
+            $ref: '#/components/schemas/DesktopEvent'
+    DesktopSyncResult:
+      type: object
+      additionalProperties: false
+      required: [applied_seq, results, commands]
+      properties:
+        applied_seq:
+          type: integer
+          minimum: 0
+          description: The highest contiguous `seq` the server has applied for this device.
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/DesktopEventResult'
+        commands:
+          type: array
+          description: Commands waiting for this device.
+          items:
+            $ref: '#/components/schemas/DeviceCommand'
+    DesktopEventResult:
+      type: object
+      additionalProperties: false
+      required: [event_id, status]
+      properties:
+        event_id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [accepted, duplicate, conflict, rejected]
+        code:
+          type: string
+          pattern: '^[a-z][a-z0-9_]*$'
+          description: >-
+            Why, for `conflict` and `rejected`: `time_locked`, `limit_reached`,
+            `project_unavailable`, `overlap_trimmed` or `clock_adjusted`.
+        details:
+          type: object
+    DeviceCommand:
+      type: object
+      additionalProperties: false
+      required: [id, command, payload]
+      properties:
+        id:
+          type: string
+          format: uuid
+        command:
+          type: string
+          enum: [refresh_config, force_sync, upload_logs, stop_timer, sign_out]
+        payload:
+          type: object
+    DesktopEvent:
+      description: |
+        One outbox event. The envelope is the same for every type (architecture §13); `type`
+        decides the payload. The envelope time is the moment the change took effect, which is not
+        always when it was recorded: `idle.detected` is dated when idle began, a restart's
+        `timer.stopped` at the agent's last snapshot, and `slot.closed` at the end of its window.
+      oneOf:
+        - $ref: '#/components/schemas/TimerStartedEvent'
+        - $ref: '#/components/schemas/TimerStoppedEvent'
+        - $ref: '#/components/schemas/IdleDetectedEvent'
+        - $ref: '#/components/schemas/IdleResolvedEvent'
+        - $ref: '#/components/schemas/BreakStartedEvent'
+        - $ref: '#/components/schemas/BreakEndedEvent'
+        - $ref: '#/components/schemas/SlotClosedEvent'
+      discriminator:
+        propertyName: type
+        mapping:
+          timer.started: '#/components/schemas/TimerStartedEvent'
+          timer.stopped: '#/components/schemas/TimerStoppedEvent'
+          idle.detected: '#/components/schemas/IdleDetectedEvent'
+          idle.resolved: '#/components/schemas/IdleResolvedEvent'
+          break.started: '#/components/schemas/BreakStartedEvent'
+          break.ended: '#/components/schemas/BreakEndedEvent'
+          slot.closed: '#/components/schemas/SlotClosedEvent'
+    DesktopEventEnvelope:
+      type: object
+      required: [event_id, seq, type, wall_time, mono_time, clock_offset_ms, payload]
+      properties:
+        event_id:
+          type: string
+          format: uuid
+          description: >-
+            UUIDv7 made on the device. For events that create a row (a time entry, idle period,
+            break or slot), it becomes that row's ID.
+        seq:
+          type: integer
+          minimum: 1
+          description: Position in this device's outbox sequence; never reused.
+        type:
+          type: string
+        wall_time:
+          type: string
+          format: date-time
+          description: >-
+            The device's time for the change, derived from monotonic time since the boot's first
+            reading, so changing the system clock does not move it.
+        mono_time:
+          $ref: '#/components/schemas/DesktopMonotonicTime'
+        clock_offset_ms:
+          type: [integer, 'null']
+          description: The last measured device-minus-server offset; null until the first sync.
+        payload:
+          type: object
+    DesktopMonotonicTime:
+      type: object
+      additionalProperties: false
+      required: [ms, boot_id]
+      properties:
+        ms:
+          type: integer
+          minimum: 0
+        boot_id:
+          type: string
+          minLength: 1
+          maxLength: 64
+          description: Monotonic readings compare only within one boot.
+    TimerStartedEvent:
+      description: >-
+        Opens a time entry, whose ID is the event ID, and starts the member's timer. The agent
+        never opens an entry while another of its entries is open; conflicts with other devices
+        follow architecture §13 (the earlier start wins).
+      unevaluatedProperties: false
+      allOf:
+        - $ref: '#/components/schemas/DesktopEventEnvelope'
+        - type: object
+          required: [type, payload]
+          properties:
+            type:
+              const: timer.started
+            payload:
+              $ref: '#/components/schemas/TimerStartedPayload'
+    TimerStartedPayload:
+      type: object
+      additionalProperties: false
+      required: [project_id, task_id, trigger]
+      properties:
+        project_id:
+          type: string
+          format: uuid
+        task_id:
+          type: [string, 'null']
+          format: uuid
+        trigger:
+          type: string
+          enum: [user, switch, resume, break_end, gap_end, restart]
+          description: >-
+            `resume` after a pause, `break_end` after a break, `gap_end` after ticks stopped for
+            over a minute, `restart` after the agent restarted.
+    TimerStoppedEvent:
+      description: >-
+        Closes the open time entry `time_entry_id` at the event's time and stops the member's
+        timer. Every reason except `user` and `switch` is a stop the member did not ask for, and
+        is usually followed by a `timer.started` (trigger `resume`, `break_end`, `gap_end` or
+        `restart`). Stopping while paused sends nothing, because the timer is already stopped.
+      unevaluatedProperties: false
+      allOf:
+        - $ref: '#/components/schemas/DesktopEventEnvelope'
+        - type: object
+          required: [type, payload]
+          properties:
+            type:
+              const: timer.stopped
+            payload:
+              $ref: '#/components/schemas/TimerStoppedPayload'
+    TimerStoppedPayload:
+      type: object
+      additionalProperties: false
+      required: [time_entry_id, reason]
+      properties:
+        time_entry_id:
+          type: string
+          format: uuid
+        reason:
+          type: string
+          enum: [user, switch, sleep, session_locked, break, gap, agent_restart]
+    IdleDetectedEvent:
+      description: >-
+        Opens a pending idle period, whose ID is the event ID, starting at the event's time.
+      unevaluatedProperties: false
+      allOf:
+        - $ref: '#/components/schemas/DesktopEventEnvelope'
+        - type: object
+          required: [type, payload]
+          properties:
+            type:
+              const: idle.detected
+            payload:
+              $ref: '#/components/schemas/IdleDetectedPayload'
+    IdleDetectedPayload:
+      type: object
+      additionalProperties: false
+      required: [time_entry_id]
+      properties:
+        time_entry_id:
+          type: string
+          format: uuid
+          description: The entry that was running when idle began.
+    IdleResolvedEvent:
+      description: >-
+        The member's decision, applied by the server as `POST /v1/idle-periods/{id}/resolve`
+        would: `keep` counts the idle time; `discard` removes it from the entries; `reassign`
+        moves it to `reassigned_project_id`; `stop` removes it and stops the timer where idle
+        began. The idle period ends at the event's time. The agent sends no other event for a
+        resolution.
+      unevaluatedProperties: false
+      allOf:
+        - $ref: '#/components/schemas/DesktopEventEnvelope'
+        - type: object
+          required: [type, payload]
+          properties:
+            type:
+              const: idle.resolved
+            payload:
+              $ref: '#/components/schemas/IdleResolvedPayload'
+    IdleResolvedPayload:
+      type: object
+      additionalProperties: false
+      required: [idle_period_id, time_entry_id, resolution, reassigned_project_id]
+      properties:
+        idle_period_id:
+          type: string
+          format: uuid
+        time_entry_id:
+          type: string
+          format: uuid
+        resolution:
+          type: string
+          enum: [keep, discard, reassign, stop]
+        reassigned_project_id:
+          type: [string, 'null']
+          format: uuid
+          description: Set only for `reassign`.
+    BreakStartedEvent:
+      description: >-
+        Starts a work break, whose ID is the event ID. A running timer is closed by a
+        `timer.stopped` with reason `break` just before.
+      unevaluatedProperties: false
+      allOf:
+        - $ref: '#/components/schemas/DesktopEventEnvelope'
+        - type: object
+          required: [type, payload]
+          properties:
+            type:
+              const: break.started
+            payload:
+              $ref: '#/components/schemas/BreakStartedPayload'
+    BreakStartedPayload:
+      type: object
+      additionalProperties: false
+      required: [break_policy_id]
+      properties:
+        break_policy_id:
+          type: string
+          format: uuid
+    BreakEndedEvent:
+      description: Ends the break `break_id`. A timer resumed after it follows as `timer.started`.
+      unevaluatedProperties: false
+      allOf:
+        - $ref: '#/components/schemas/DesktopEventEnvelope'
+        - type: object
+          required: [type, payload]
+          properties:
+            type:
+              const: break.ended
+            payload:
+              $ref: '#/components/schemas/BreakEndedPayload'
+    BreakEndedPayload:
+      type: object
+      additionalProperties: false
+      required: [break_id]
+      properties:
+        break_id:
+          type: string
+          format: uuid
+    SlotClosedEvent:
+      description: >-
+        One 10-minute activity slot, whose ID is the event ID, dated at the end of its window.
+        There is at most one per device and window. It belongs to the entry with the most time in
+        it; time entries remain the source of truth for tracked time.
+      unevaluatedProperties: false
+      allOf:
+        - $ref: '#/components/schemas/DesktopEventEnvelope'
+        - type: object
+          required: [type, payload]
+          properties:
+            type:
+              const: slot.closed
+            payload:
+              $ref: '#/components/schemas/SlotClosedPayload'
+    SlotClosedPayload:
+      type: object
+      additionalProperties: false
+      required:
+        - slot_start
+        - time_entry_id
+        - project_id
+        - task_id
+        - tracked_seconds
+        - active_seconds
+        - keyboard_seconds
+        - mouse_seconds
+        - idle_seconds
+        - input_method
+        - flags
+      properties:
+        slot_start:
+          type: string
+          format: date-time
+          description: The window's start, aligned to :00, :10, :20… UTC.
+        time_entry_id:
+          type: string
+          format: uuid
+        project_id:
+          type: string
+          format: uuid
+        task_id:
+          type: [string, 'null']
+          format: uuid
+        tracked_seconds:
+          type: integer
+          minimum: 1
+          maximum: 600
+        active_seconds:
+          type: integer
+          minimum: 0
+          maximum: 600
+          description: Seconds with any input; never more than tracked.
+        keyboard_seconds:
+          type: [integer, 'null']
+          minimum: 0
+          maximum: 600
+          description: Null when the OS gives no keyboard and mouse split (Wayland).
+        mouse_seconds:
+          type: [integer, 'null']
+          minimum: 0
+          maximum: 600
+        idle_seconds:
+          type: integer
+          minimum: 0
+          maximum: 600
+        input_method:
+          type: string
+          enum: [hooks, idle_poll, portal]
+        flags:
+          type: array
+          uniqueItems: true
+          items:
+            type: string
+            enum: [partial_slot, clock_adjusted]

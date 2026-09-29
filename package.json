@@ -10,9 +10,11 @@
   },
   "scripts": {
     "build": "turbo run build",
+    "dev": "turbo run dev",
     "lint": "turbo run lint",
     "typecheck": "turbo run typecheck",
     "test": "turbo run test",
+    "test:e2e": "turbo run test:e2e",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "commitlint": "commitlint",
@@ -21,7 +23,7 @@
   "devDependencies": {
     "@commitlint/cli": "21.2.3",
     "@commitlint/config-conventional": "21.2.3",
-    "prettier": "3.9.9",
-    "turbo": "2.11.4"
+    "prettier": "3.9.8",
+    "turbo": "2.11.2"
   }
 }

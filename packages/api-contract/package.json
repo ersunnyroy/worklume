@@ -1,0 +1,27 @@
+{
+  "name": "@worklume/api-contract",
+  "version": "1.0.0",
+  "private": true,
+  "description": "The Worklume API contract (OpenAPI 3.1): the source of truth for the API and its clients.",
+  "license": "UNLICENSED",
+  "type": "module",
+  "exports": {
+    "./openapi.yaml": "./openapi.yaml"
+  },
+  "scripts": {
+    "lint": "spectral lint openapi.yaml --ruleset .spectral.yaml --fail-severity warn && eslint --max-warnings=0 .",
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "node --test \"test/**/*.test.js\""
+  },
+  "devDependencies": {
+    "@stoplight/spectral-cli": "6.16.3",
+    "@types/node": "22.20.4",
+    "@worklume/eslint-config": "workspace:*",
+    "@worklume/tsconfig": "workspace:*",
+    "ajv": "8.20.0",
+    "ajv-formats": "2.1.1",
+    "eslint": "10.11.0",
+    "typescript": "6.0.3",
+    "yaml": "2.9.1"
+  }
+}

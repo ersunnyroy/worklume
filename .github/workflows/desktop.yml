@@ -1,0 +1,128 @@
+# Builds unsigned desktop installers on every OS the agent supports (E00-S09), and tests the
+# agent against each OS's credential store (E09-S02). Signing and notarisation arrive with
+# E10-E13; releases with E09-S10.
+name: Desktop
+
+on:
+  pull_request:
+    paths:
+      - 'apps/desktop/**'
+      - 'packages/eslint-config/**'
+      - 'packages/tsconfig/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'clippy.toml'
+      - 'rust-toolchain.toml'
+      - 'rustfmt.toml'
+      - '.github/workflows/desktop.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'apps/desktop/**'
+      - 'packages/eslint-config/**'
+      - 'packages/tsconfig/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'clippy.toml'
+      - 'rust-toolchain.toml'
+      - 'rustfmt.toml'
+      - '.github/workflows/desktop.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: desktop-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macOS (Apple silicon)
+            os: macos-15
+          - name: Windows
+            os: windows-2025
+          # The oldest supported Ubuntu, so the .deb and AppImage run on 22.04 and later.
+          - name: Ubuntu 22.04
+            os: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install Linux build libraries
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev libssl-dev patchelf libdbus-1-dev pkg-config gnome-keyring
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .node-version
+
+      - name: Enable pnpm
+        run: corepack enable
+
+      - name: Install the pinned Rust toolchain
+        run: rustup toolchain install
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint, typecheck and test
+        id: checks
+        run: pnpm exec turbo run lint typecheck test --filter=@worklume/desktop
+
+      # Clippy errors and failed Rust tests are repeated as one annotation, so they show on the
+      # pull request without opening the full log. Everything is already built, so this adds
+      # about a minute. (The Actions bash shell sets pipefail; grep finding nothing is fine here.)
+      - name: Annotate Rust failures
+        if: failure() && steps.checks.outcome == 'failure'
+        shell: bash
+        run: |
+          cargo clippy --workspace --all-targets --locked --message-format=short -- -D warnings > clippy.log 2>&1 || true
+          cargo test --workspace --locked --no-fail-fast > cargo-test.log 2>&1 || true
+          { grep -E '^[^ ].*: (error|warning)' clippy.log || true; grep -E -A4 '^---- |panicked at' cargo-test.log || true; } > rust-failures.log
+          summary=$(head -80 rust-failures.log | sed 's/%/%25/g; s/\r//g' | awk '{printf "%s%%0A", $0}')
+          if [ -n "$summary" ]; then
+            echo "::error title=Rust failures::${summary}"
+          else
+            echo "::error title=Checks failed::No Clippy error or Rust test failure; see the Lint, typecheck and test step."
+          fi
+
+      # The OS credential store tests are ignored in ordinary runs because they touch the real
+      # keychain. On Linux, GNOME Keyring runs unlocked inside a throwaway D-Bus session.
+      - name: Test against the OS credential store
+        if: runner.os != 'Linux'
+        run: cargo test -p worklume-platform --test os_secret_store --locked -- --ignored
+
+      - name: Test against the OS credential store (GNOME Keyring)
+        if: runner.os == 'Linux'
+        run: >-
+          dbus-run-session -- sh -c 'printf ci | gnome-keyring-daemon --unlock --components=secrets >/dev/null
+          && cargo test -p worklume-platform --test os_secret_store --locked -- --ignored'
+
+      - name: Build unsigned installers
+        run: pnpm --filter @worklume/desktop build:app
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: worklume-desktop-${{ matrix.os }}
+          path: |
+            target/release/bundle/dmg/*.dmg
+            target/release/bundle/msi/*.msi
+            target/release/bundle/nsis/*.exe
+            target/release/bundle/deb/*.deb
+            target/release/bundle/rpm/*.rpm
+            target/release/bundle/appimage/*.AppImage
+          if-no-files-found: error
+          retention-days: 14

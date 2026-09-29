@@ -1,0 +1,105 @@
+# Lint rules for the Worklume API contract. Spectral's OpenAPI recommendations, plus the
+# conventions from the architecture's API catalog (docs/planning/phase-2-api.md) that a
+# machine can check. Fixture tests in test/ prove each Worklume rule fires.
+extends: [[spectral:oas, recommended]]
+functionsDir: rules/functions
+functions:
+  - idempotencyDeclared
+
+rules:
+  worklume-no-client-organization-id-parameter:
+    description: >-
+      Tenant operations take the organization from the access token. A client-supplied
+      organization ID is never trusted, so it cannot appear as a parameter. Identity-level
+      operations such as switching organization opt out with x-worklume-allows-organization-id.
+    message: '"{{value}}" cannot be a parameter: the organization comes from the access token.'
+    severity: error
+    given:
+      - "$.paths[*][?(@property.match(/^(get|put|post|patch|delete)$/) && !@['x-worklume-allows-organization-id'])].parameters[*].name"
+      - '$.paths[*].parameters[*].name'
+    then:
+      function: pattern
+      functionOptions:
+        notMatch: '/^(organization|org)_?id$/i'
+
+  worklume-no-client-organization-id-body:
+    description: >-
+      Request bodies of tenant operations cannot carry an organization ID either, at any depth.
+    message: '"{{property}}" cannot be in a request body: the organization comes from the access token.'
+    severity: error
+    given: "$.paths[*][?(@property.match(/^(get|put|post|patch|delete)$/) && !@['x-worklume-allows-organization-id'])].requestBody.content[*].schema..properties"
+    then:
+      field: '@key'
+      function: pattern
+      functionOptions:
+        notMatch: '/^(organization|org)_?id$/i'
+
+  worklume-snake-case-properties:
+    description: JSON property names are snake_case.
+    message: '"{{property}}" must be snake_case.'
+    severity: error
+    given:
+      - '$.components.schemas..properties'
+      - '$.paths..schema..properties'
+    then:
+      field: '@key'
+      function: pattern
+      functionOptions:
+        match: '^[a-z][a-z0-9]*(_[a-z0-9]+)*$'
+
+  worklume-problem-json-errors:
+    description: Error responses are RFC 9457 problem details, and nothing else.
+    message: 'Error responses must use only application/problem+json.'
+    severity: error
+    given: '$.paths[*][*].responses[?(@property.match(/^([45][0-9][0-9]|default)$/))].content'
+    then:
+      function: schema
+      functionOptions:
+        schema:
+          type: object
+          required: ['application/problem+json']
+          additionalProperties: false
+          properties:
+            application/problem+json: {}
+
+  worklume-versioned-paths:
+    description: >-
+      Paths start with /v1/. Health checks and standard well-known endpoints opt out with
+      x-worklume-unversioned on the path item.
+    message: '{{property}} must start with /v1/.'
+    severity: error
+    given: "$.paths[?(!@['x-worklume-unversioned'])]~"
+    then:
+      function: pattern
+      functionOptions:
+        match: '^/v1/'
+
+  worklume-path-casing:
+    description: Path segments are lowercase kebab-case; path parameters are snake_case.
+    message: '{{property}} must use lowercase kebab-case segments and snake_case parameters.'
+    severity: error
+    given: '$.paths[*]~'
+    then:
+      function: pattern
+      functionOptions:
+        match: '^(/(\{[a-z][a-z0-9_]*\}|\.?[a-z0-9]+([.-][a-z0-9]+)*))+$'
+
+  worklume-operation-id-camel-case:
+    description: Operation IDs are camelCase; generated clients use them as method names.
+    message: '{{value}} must be camelCase.'
+    severity: error
+    given: '$.paths[*][get,put,post,patch,delete].operationId'
+    then:
+      function: pattern
+      functionOptions:
+        match: '^[a-z][a-zA-Z0-9]*$'
+
+  worklume-idempotency-declared:
+    description: >-
+      Every POST states its idempotency, as the API catalog's column does: natural,
+      key-required, key-optional or client-id. Key modes must declare the Idempotency-Key
+      header, and key-required must mark it required.
+    severity: error
+    given: '$.paths[*].post'
+    then:
+      function: idempotencyDeclared

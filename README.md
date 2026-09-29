@@ -6,16 +6,18 @@ share.
 
 ## Layout
 
-| Path                     | What lives there                                                 | Arrives in |
-| ------------------------ | ---------------------------------------------------------------- | ---------- |
-| `apps/api`               | Laravel API, modular monolith (`app/Domains/*`)                  | E00-S02    |
-| `apps/web`               | React web app (Vite, TanStack Router and Query)                  | E00-S08    |
-| `apps/desktop`           | Tauri 2 desktop agent: Rust core with per-OS adapters, React UI  | E00-S09    |
-| `apps/mobile`            | Expo (React Native) app                                          | E00-S09    |
-| `packages/tsconfig`      | Shared TypeScript settings                                       | E00-S01    |
-| `packages/eslint-config` | Shared ESLint flat configs (`base`, `react`)                     | E00-S01    |
-| `docs/planning`          | Research, architecture and implementation plan (source of truth) | —          |
-| `docs/conventions`       | Repository conventions and tooling decisions                     | —          |
+| Path                     | What lives there                                                                | Arrives in |
+| ------------------------ | ------------------------------------------------------------------------------- | ---------- |
+| `apps/api`               | Laravel API, modular monolith (`app/Domains/*`)                                 | E00-S02    |
+| `apps/web`               | React web app (Vite, TanStack Router and Query); see its README                 | E00-S08    |
+| `apps/desktop`           | Tauri 2 desktop agent: Rust core with per-OS adapters, React UI; see its README | E00-S09    |
+| `apps/mobile`            | Expo (React Native) app; see its README                                         | E00-S09    |
+| `packages/tsconfig`      | Shared TypeScript settings                                                      | E00-S01    |
+| `packages/eslint-config` | Shared ESLint flat configs (`base`, `react`)                                    | E00-S01    |
+| `packages/api-contract`  | OpenAPI 3.1 contract and its Spectral rules; see its README                     | E00-S07    |
+| `packages/api-client`    | Typed API client generated from the contract                                    | E00-S07    |
+| `docs/planning`          | Research, architecture and implementation plan (source of truth)                | —          |
+| `docs/conventions`       | Repository conventions and tooling decisions                                    | —          |
 
 ## Prerequisites
 
@@ -29,7 +31,8 @@ share.
 | PostgreSQL | 17                  | API (from E00-S06)    |
 | Valkey     | 8                   | API (from E00-S06)    |
 
-`rust-toolchain.toml` makes `rustup` install the pinned Rust version on first use.
+`rust-toolchain.toml` makes `rustup` install the pinned Rust version on first use. The desktop
+app also needs the platform's webview libraries; see [apps/desktop/README.md](apps/desktop/README.md).
 
 ## Getting started
 
@@ -50,6 +53,8 @@ build, across every workspace package, with Turborepo caching.
 | Command          | Does                                          |
 | ---------------- | --------------------------------------------- |
 | `pnpm check`     | Format check, lint, typecheck, test and build |
+| `pnpm dev`       | Start every app's dev server                  |
+| `pnpm test:e2e`  | Browser smoke tests against production builds |
 | `pnpm lint`      | Lint every package                            |
 | `pnpm typecheck` | Typecheck every package                       |
 | `pnpm test`      | Run every package's tests                     |

@@ -1,0 +1,15 @@
+# Replaces Semgrep's default ignore list, so dependencies and build output are listed here too.
+node_modules/
+dist/
+build/
+target/
+coverage/
+.turbo/
+.expo/
+playwright-report/
+test-results/
+
+# Exported planning documents and generated code.
+docs/planning/
+apps/web/src/routeTree.gen.ts
+apps/desktop/src-tauri/gen/

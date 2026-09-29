@@ -1,0 +1,41 @@
+{
+  "name": "@worklume/desktop",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Worklume desktop agent: a tray-resident Tauri 2 app with a Rust core and a React UI.",
+  "license": "UNLICENSED",
+  "type": "module",
+  "scripts": {
+    "dev": "tauri dev",
+    "dev:frontend": "vite",
+    "build": "vite build",
+    "build:app": "tauri build",
+    "lint": "eslint --max-warnings=0 . && node scripts/check-crate-boundaries.mjs && cargo fmt --all --check && cargo clippy --workspace --all-targets --locked -- -D warnings",
+    "typecheck": "tsc -b",
+    "test": "vitest run && node --test \"scripts/**/*.test.mjs\" && cargo test --workspace --locked",
+    "tauri": "tauri"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "2.11.1",
+    "react": "19.3.0",
+    "react-dom": "19.3.0"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "2.11.5",
+    "@testing-library/dom": "10.4.2",
+    "@testing-library/jest-dom": "7.0.1",
+    "@testing-library/react": "16.3.3",
+    "@types/node": "22.20.4",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "@vitejs/plugin-react": "6.1.1",
+    "@worklume/eslint-config": "workspace:*",
+    "@worklume/tsconfig": "workspace:*",
+    "axe-core": "4.13.0",
+    "eslint": "10.11.0",
+    "jsdom": "30.1.0",
+    "typescript": "6.0.3",
+    "vite": "8.3.0",
+    "vitest": "5.0.1"
+  }
+}

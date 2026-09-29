@@ -1,0 +1,31 @@
+{
+  "name": "@worklume/api-client",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Typed Worklume API client, generated from @worklume/api-contract.",
+  "license": "UNLICENSED",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "generate": "openapi-typescript ../api-contract/openapi.yaml --output src/schema.gen.ts",
+    "build": "pnpm run generate",
+    "lint": "eslint --max-warnings=0 .",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "openapi-fetch": "0.17.0"
+  },
+  "devDependencies": {
+    "@types/node": "22.20.4",
+    "@worklume/api-contract": "workspace:*",
+    "@worklume/eslint-config": "workspace:*",
+    "@worklume/tsconfig": "workspace:*",
+    "eslint": "10.11.0",
+    "openapi-typescript": "7.13.0",
+    "typescript": "6.0.3",
+    "vitest": "5.0.1"
+  }
+}

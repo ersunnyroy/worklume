@@ -1,0 +1,10 @@
+{
+  "extends": "@worklume/tsconfig/node-library.json",
+  "compilerOptions": {
+    "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.node.tsbuildinfo",
+    "types": ["node"],
+    "allowJs": true,
+    "checkJs": true
+  },
+  "include": ["vite.config.ts", "scripts"]
+}

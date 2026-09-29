@@ -1,0 +1,38 @@
+{
+  "name": "@worklume/mobile",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Worklume mobile app for iOS and Android, built with Expo (development builds, not Expo Go).",
+  "license": "UNLICENSED",
+  "main": "index.ts",
+  "scripts": {
+    "dev": "expo start --dev-client",
+    "build": "expo export --platform ios --platform android --output-dir dist",
+    "native:generate": "expo prebuild --clean --no-install",
+    "lint": "eslint --max-warnings=0 .",
+    "typecheck": "tsc --noEmit",
+    "test": "jest"
+  },
+  "dependencies": {
+    "expo": "57.0.24",
+    "expo-dev-client": "57.0.19",
+    "expo-status-bar": "57.0.1",
+    "expo-system-ui": "57.0.4",
+    "react": "19.2.3",
+    "react-native": "0.86.3"
+  },
+  "devDependencies": {
+    "@react-native/jest-preset": "0.86.3",
+    "@testing-library/react-native": "14.0.1",
+    "@types/jest": "29.5.14",
+    "@types/react": "19.2.18",
+    "@worklume/eslint-config": "workspace:*",
+    "@worklume/tsconfig": "workspace:*",
+    "eslint": "10.11.0",
+    "jest": "29.7.0",
+    "jest-expo": "57.0.5",
+    "react-dom": "19.2.3",
+    "test-renderer": "1.2.0",
+    "typescript": "6.0.3"
+  }
+}

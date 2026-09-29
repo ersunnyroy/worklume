@@ -1,10 +1,15 @@
 # Rust workspace for the desktop agent and its shared crates.
-# Members are added with the first crates in E00-S09 (Tauri scaffold) and
-# E09-S01 (core, sync, storage, platform). Until then the workspace is empty,
-# so `cargo check` at the root reports that there is nothing to build.
+# The Tauri shell arrived in E00-S09; E09-S01 added core, sync, storage and platform.
+# Allowed dependencies between them are checked by apps/desktop/scripts/check-crate-boundaries.mjs.
 [workspace]
 resolver = "3"
-members = []
+members = [
+  "apps/desktop/src-tauri",
+  "apps/desktop/core",
+  "apps/desktop/platform",
+  "apps/desktop/storage",
+  "apps/desktop/sync",
+]
 
 [workspace.package]
 edition = "2024"
@@ -30,3 +35,8 @@ unimplemented = "deny"
 dbg_macro = "deny"
 print_stdout = "deny"
 print_stderr = "deny"
+
+[profile.release]
+# Smaller, faster agent binaries. Debug symbols for crash reports arrive with E09-S11.
+lto = true
+codegen-units = 1

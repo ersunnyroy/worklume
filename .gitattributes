@@ -14,3 +14,6 @@ pnpm-lock.yaml linguist-generated=true -diff
 composer.lock linguist-generated=true -diff
 Cargo.lock linguist-generated=true -diff
 docs/planning/** linguist-documentation=true
+apps/web/src/routeTree.gen.ts linguist-generated=true
+packages/api-client/src/schema.gen.ts linguist-generated=true
+apps/desktop/frontend/src/ipc/bindings.gen.ts linguist-generated=true

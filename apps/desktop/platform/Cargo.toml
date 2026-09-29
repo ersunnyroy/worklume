@@ -1,0 +1,32 @@
+[package]
+name = "worklume-platform"
+description = "Worklume desktop agent: operating-system integration behind traits, one adapter per OS."
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[features]
+# Test doubles for other crates' tests and the simulation harness. Never enabled in the app.
+fake = []
+
+[dependencies]
+keyring-core = "1.0.0"
+thiserror = "2.0.18"
+zeroize = "1.8.2"
+
+# One credential store per OS, each linked only on its own target.
+[target.'cfg(target_os = "macos")'.dependencies]
+apple-native-keyring-store = { version = "1.0.2", features = ["keychain"] }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+# The default `search` feature pulls in regex for a feature the agent does not use.
+windows-native-keyring-store = { version = "1.1.0", default-features = false }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+# Encrypts the D-Bus session with the Secret Service in pure Rust; links the system libdbus.
+dbus-secret-service-keyring-store = { version = "1.0.1", features = ["crypto-rust"] }
+
+[lints]
+workspace = true
