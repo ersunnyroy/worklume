@@ -379,10 +379,12 @@ impl Timekeeper {
             .is_some_and(|timeout| inactive_ms + slept_ms >= millis(timeout));
 
         match self.tracker.state() {
-            TrackerState::Running { .. } => {
+            TrackerState::Running { entry } => {
+                // Idle time can only begin inside the entry.
+                let idle_since = inactive_since.map(|since| since.max(entry.started.mono_ms));
                 self.tracker.tick(asleep_at, activity)?;
                 if away_long
-                    && let Some(since) = inactive_since
+                    && let Some(since) = idle_since
                     && asleep_at.mono_ms() - since >= MIN_IDLE_MS
                 {
                     let since = moment_before(asleep_at, since)?;

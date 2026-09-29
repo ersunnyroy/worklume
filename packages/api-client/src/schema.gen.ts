@@ -221,7 +221,7 @@ export interface components {
             /** @enum {string} */
             reason: "user" | "switch" | "sleep" | "session_locked" | "break" | "gap" | "agent_restart";
         };
-        /** @description Opens a pending idle period, whose ID is the event ID, starting at the event's time. */
+        /** @description Opens a pending idle period, whose ID is the event ID, starting at the event's time inside the entry `time_entry_id`. Until it is resolved, the period covers all of this device's tracked time from its start: when the agent restarts or a gap splits the entry meanwhile (`timer.stopped` with reason `agent_restart` or `gap`, then `timer.started`), it carries on into the new entry. */
         IdleDetectedEvent: components["schemas"]["DesktopEventEnvelope"] & {
             /** @constant */
             type: "idle.detected";
@@ -240,7 +240,7 @@ export interface components {
              */
             time_entry_id: string;
         };
-        /** @description The decision about an idle period, applied by the server as `POST /v1/idle-periods/{id}/resolve` would: `keep` counts the idle time; `discard` removes it from the entries; `reassign` moves it to `reassigned_project_id`; `stop` removes it and stops the timer where idle began. The idle period ends at the event's time, or where its entry ended if that came first: the device slept while the decision was pending, and the entry's `timer.stopped` (reason `sleep`) came before this event. The agent sends no other event for a resolution. `decided_by: policy` marks a decision the organization's keep-idle policy made without asking (`always` sends `keep`, `never` sends `stop`); the server records it as `auto_kept` or `auto_discarded`. The server checks every decision against the member's effective keep-idle policy and applies the policy's outcome where they differ, so an agent cannot keep idle time under `never`. */
+        /** @description The decision about an idle period, applied by the server as `POST /v1/idle-periods/{id}/resolve` would: `keep` counts the idle time; `discard` removes it from the entries it spans; `reassign` moves it to `reassigned_project_id`; `stop` removes it and stops the timer where idle began, ending the open entry, which is a later one than the period began in if the entry was split meanwhile. The idle period ends at the event's time, or where tracking stopped if that came first: the device slept while the decision was pending, and the pause's `timer.stopped` (reason `sleep`) came before this event. The agent sends no other event for a resolution. `decided_by: policy` marks a decision the organization's keep-idle policy made without asking (`always` sends `keep`, `never` sends `stop`); the server records it as `auto_kept` or `auto_discarded`. The server checks every decision against the member's effective keep-idle policy and applies the policy's outcome where they differ, so an agent cannot keep idle time under `never`. */
         IdleResolvedEvent: components["schemas"]["DesktopEventEnvelope"] & {
             /** @constant */
             type: "idle.resolved";

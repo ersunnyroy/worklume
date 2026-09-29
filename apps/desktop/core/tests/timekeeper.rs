@@ -326,6 +326,20 @@ fn time_away_before_a_short_sleep_counts_towards_the_absence() {
 }
 
 #[test]
+fn idle_before_a_sleep_begins_no_earlier_than_the_entry() {
+    let mut rig = Rig::new(policy(KeepIdle::Prompt));
+    rig.start();
+    rig.away(200);
+    // The agent restarts, so a new entry begins now; then the lid closes.
+    rig.restart(policy(KeepIdle::Prompt));
+    rig.sleep_and_wake(Duration::from_mins(2));
+
+    // Away for 320 s in all, over the timeout, but none of it inside the new entry.
+    assert!(rig.harness.events_of("idle.detected").is_empty());
+    assert!(matches!(rig.prompt(), Some(Prompt::Resume { .. })));
+}
+
+#[test]
 fn answering_after_a_sleep_resumes_the_timer() {
     let mut rig = Rig::new(policy(KeepIdle::Prompt));
     rig.start();
