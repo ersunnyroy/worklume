@@ -4,11 +4,13 @@
 //! tray. A second launch focuses the running agent instead of starting another one. In release
 //! builds a watchdog process restarts the agent after a crash. Tracking, storage and sync live
 //! in the `worklume-core`, `worklume-storage` and `worklume-sync` crates; OS access lives in
-//! `worklume-platform`.
+//! `worklume-platform`. [`agent`] runs the timekeeper on a background thread for the timer UI.
 
+pub mod agent;
 pub mod diagnostics;
 pub mod ipc;
 mod startup;
+mod ticker;
 mod tray;
 pub mod watchdog;
 mod window;
@@ -29,9 +31,12 @@ pub fn run() -> tauri::Result<()> {
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             window::show_main(app);
         }))
+        .manage(agent::Agent::new(Box::new(agent::local_day_start)))
         .invoke_handler(commands.invoke_handler())
-        .setup(|app| {
+        .setup(move |app| {
+            commands.mount_events(app);
             tray::install(app.handle())?;
+            ticker::spawn(app.handle().clone())?;
             Ok(())
         })
         .build(tauri::generate_context!())?;

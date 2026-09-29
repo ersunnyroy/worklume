@@ -1,12 +1,15 @@
 # @worklume/desktop
 
 The Worklume desktop agent: a Tauri 2 app that lives in the menu bar (macOS) or system tray
-(Windows, Linux). Right now it is a shell: a tray icon with **Open Worklume** and **Quit
-Worklume**, a window that starts hidden and hides again when closed, a single running instance,
-one typed command (`agent_status`) behind an IPC allowlist, and, in release builds, a watchdog
-that restarts the agent after a crash. The tracker and timekeeper (`core/`), the device clock
-(`platform/`) and the encrypted store (`storage/`) exist and are tested; the app runs them once
-sign-in and the agent UI arrive (E09-S03, E09-S09).
+(Windows, Linux). It has a tray icon with **Open Worklume** and **Quit Worklume**, a window that
+starts hidden and hides again when closed, a single running instance, and, in release builds, a
+watchdog that restarts the agent after a crash.
+
+The app opens its encrypted store (`storage/`) and runs the timekeeper (`core/`) on the device
+clock, ticking every second. The window shows the timer, the project picker and the idle
+question through typed commands and an event behind an IPC allowlist (E09-S09). Projects to
+track arrive with sign-in and the configuration (E09-S03, E09-S06). Until the per-OS adapters
+arrive (E10–E13), idle time, app usage and input read as unsupported.
 
 ## Layout
 
@@ -15,11 +18,12 @@ sign-in and the agent UI arrive (E09-S03, E09-S09).
 | `frontend/`                        | React UI rendered in the webview (Vite root)                           |
 | `frontend/src/ipc/bindings.gen.ts` | Typed command bindings, generated from `src-tauri/src/ipc.rs`          |
 | `src-tauri/`                       | The Tauri shell crate `worklume-desktop`: tray, window, IPC, lifecycle |
+| `src-tauri/src/agent.rs`           | The running agent: store, timekeeper and catalog, ticked every second  |
 | `src-tauri/src/watchdog.rs`        | Supervisor that restarts the agent after a crash                       |
 | `src-tauri/src/diagnostics/`       | Log files and crash reports, without personal data                     |
 | `src-tauri/capabilities/`          | IPC allowlist for the main window                                      |
 | `src-tauri/tests/`                 | Integration tests, including Tauri mock-runtime and allowlist tests    |
-| `core/`                            | `worklume-core`: tracker, slots, idle and sleep, app and URL usage     |
+| `core/`                            | `worklume-core`: tracker, slots, idle and sleep, usage, timer view     |
 | `storage/`                         | `worklume-storage`: SQLCipher journal and outbox, encrypted spool      |
 | `storage/migrations/`              | Local schema migrations, applied in order, append-only                 |
 | `sync/`                            | `worklume-sync`: outbox drain and uploads (E09-S05)                    |

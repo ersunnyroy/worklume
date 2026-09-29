@@ -585,6 +585,22 @@ impl Device {
         self.hands.ledger()
     }
 
+    /// Time the agent counts from `from_wall_ms`, for its "today" total, while it runs.
+    #[must_use]
+    pub fn tracked_since(&self, from_wall_ms: i64) -> Option<Duration> {
+        self.agent
+            .as_ref()
+            .map(|agent| agent.keeper.tracked_since(from_wall_ms))
+    }
+
+    /// The agent's wall time, as it dates events, while it runs.
+    #[must_use]
+    pub fn agent_wall_ms(&self) -> Option<i64> {
+        self.agent
+            .as_ref()
+            .and_then(|agent| agent.keeper.wall_now_ms())
+    }
+
     /// Puts something else in front of the member.
     pub fn focus(&mut self, focus: Focus) {
         self.window.set_error(None);

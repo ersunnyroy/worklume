@@ -114,6 +114,9 @@ impl fmt::Display for Step {
     }
 }
 
+/// How far back the day-total check looks: inside the two days the agent keeps.
+const TOTAL_SPAN_MS: i64 = 47 * 3_600_000;
+
 fn seconds(duration: Duration) -> String {
     format!("{} s", duration.as_secs())
 }
@@ -229,6 +232,20 @@ fn report(steps: &[Step], device: &Device) -> Result<Report, SimError> {
     let left = device.outbox_len()?;
     if left > 0 {
         problems.push(format!("{left} events never reached the server"));
+    }
+    // The agent's day total agrees with what the server keeps, over the two days the agent
+    // remembers.
+    if let Some(now) = device.agent_wall_ms() {
+        let from = now - TOTAL_SPAN_MS;
+        let server = timeline.kept_since(from);
+        let agent = device
+            .tracked_since(from)
+            .map(|total| i64::try_from(total.as_millis()).unwrap_or(i64::MAX));
+        if agent != Some(server) {
+            problems.push(format!(
+                "the agent counts {agent:?} ms since {from}, the server keeps {server} ms"
+            ));
+        }
     }
     Ok(Report {
         steps: steps.to_vec(),

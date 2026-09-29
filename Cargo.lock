@@ -6022,6 +6022,7 @@ name = "worklume-desktop"
 version = "0.1.0"
 dependencies = [
  "dirs",
+ "jiff",
  "sentry",
  "serde",
  "serde_json",
@@ -6036,6 +6037,7 @@ dependencies = [
  "tracing",
  "tracing-appender",
  "tracing-subscriber",
+ "uuid",
  "worklume-core",
  "worklume-platform",
  "worklume-storage",

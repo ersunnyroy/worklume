@@ -1,13 +1,13 @@
 import { render, screen } from '@testing-library/react';
-import axe from 'axe-core';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { About } from './About';
 import { commands } from './ipc/bindings.gen';
-import { StatusScreen } from './StatusScreen';
+import { accessibilityViolations } from './test/axe';
 
 vi.mock('./ipc/bindings.gen', () => ({ commands: { agentStatus: vi.fn() } }));
 const agentStatus = vi.mocked(commands.agentStatus);
 
-describe('StatusScreen', () => {
+describe('About', () => {
   beforeEach(() => {
     agentStatus.mockResolvedValue({
       version: '0.1.0',
@@ -16,14 +16,14 @@ describe('StatusScreen', () => {
   });
 
   it('explains that the agent keeps running from the tray', () => {
-    render(<StatusScreen />);
+    render(<About />);
 
-    expect(screen.getByRole('heading', { level: 1, name: 'Worklume' })).toBeVisible();
-    expect(screen.getByText(/Closing this window keeps it running/)).toBeInTheDocument();
+    expect(screen.getByRole('heading', { level: 2, name: 'About' })).toBeVisible();
+    expect(screen.getByText(/Closing this window keeps Worklume running/)).toBeInTheDocument();
   });
 
   it('shows the version and platform reported by the agent', async () => {
-    render(<StatusScreen />);
+    render(<About />);
 
     expect(await screen.findByText('0.1.0')).toBeInTheDocument();
     expect(screen.getByText('Linux (Wayland)')).toBeInTheDocument();
@@ -33,17 +33,15 @@ describe('StatusScreen', () => {
   it('says so when the agent cannot answer', async () => {
     agentStatus.mockRejectedValue(new Error('IPC unavailable'));
 
-    render(<StatusScreen />);
+    render(<About />);
 
     expect(await screen.findByRole('alert')).toHaveTextContent('Agent details are unavailable.');
   });
 
   it('has no detectable accessibility violations', async () => {
-    const { container } = render(<StatusScreen />);
+    const { container } = render(<About />);
     await screen.findByText('0.1.0');
 
-    // Colour contrast needs real layout; jsdom cannot compute it.
-    const results = await axe.run(container, { rules: { 'color-contrast': { enabled: false } } });
-    expect(results.violations.map((violation) => violation.id)).toEqual([]);
+    expect(await accessibilityViolations(container)).toEqual([]);
   });
 });

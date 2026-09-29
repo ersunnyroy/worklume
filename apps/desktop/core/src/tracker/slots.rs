@@ -19,6 +19,7 @@ use worklume_storage::NewEvent;
 
 use super::TrackerError;
 use super::events::{self, fields};
+use super::ledger::Ledger;
 use super::state::{Entry, WorkTarget};
 use crate::input::{InputStats, Rhythm};
 use crate::time::{Moment, rfc3339_utc};
@@ -203,6 +204,9 @@ pub(crate) struct Slots {
     /// The previous inputs, to measure intervals. Never saved: it holds event times.
     #[serde(skip)]
     rhythm: Rhythm,
+    /// Tracked time per window over two days, for the "today" total (E09-S09).
+    #[serde(default)]
+    ledger: Ledger,
 }
 
 impl Slots {
@@ -233,6 +237,7 @@ impl Slots {
             let window_start = cursor.div_euclid(SLOT_MS) * SLOT_MS;
             let piece_end = end.min(window_start + SLOT_MS);
             let piece = u64::try_from(piece_end - cursor).unwrap_or(0);
+            self.ledger.add(window_start, piece, interval.idle);
             let slot = self.slot_for(window_start, interval.anchor);
             slot.tracked_ms += piece;
             slot.active_ms += share(active, piece);
@@ -310,6 +315,21 @@ impl Slots {
         self.rhythm.forget();
     }
 
+    /// Idle was detected from `from_wall_ms`: the time counted since waits for the decision.
+    pub(crate) fn hold_idle(&mut self, from_wall_ms: i64, to_wall_ms: i64) {
+        self.ledger.hold(from_wall_ms, to_wall_ms);
+    }
+
+    /// The idle decision: the pending time is kept, or dropped.
+    pub(crate) fn settle_idle(&mut self, keep: bool) {
+        self.ledger.settle(keep);
+    }
+
+    /// Milliseconds tracked in windows starting at or after `from_wall_ms`, within two days.
+    pub(crate) fn tracked_since(&self, from_wall_ms: i64) -> u64 {
+        self.ledger.since(from_wall_ms)
+    }
+
     /// Marks the slot open at `wall_ms`, if any, as affected by a clock change.
     pub(crate) fn flag_clock_adjusted(&mut self, wall_ms: i64) {
         let window_start = wall_ms.div_euclid(SLOT_MS) * SLOT_MS;
@@ -366,6 +386,7 @@ impl Slots {
         input_method: InputMethod,
         out: &mut Vec<NewEvent>,
     ) -> Result<(), TrackerError> {
+        self.ledger.prune(wall_ms);
         while self
             .open
             .first()

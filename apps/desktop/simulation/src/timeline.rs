@@ -1,7 +1,7 @@
 //! What the server received, folded into time entries, idle periods, breaks and slots, with
 //! every invariant the agent must keep.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt;
 
 use serde_json::Value;
@@ -28,7 +28,11 @@ struct EntryRecord {
 #[derive(Debug)]
 struct IdleRecord {
     resolved: bool,
+    since_wall_ms: i64,
 }
+
+/// 10-minute windows, as the agent's ledger keys them.
+const WINDOW_MS: i64 = 600_000;
 
 /// Totals of a checked timeline.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -59,6 +63,21 @@ pub struct Summary {
 pub struct TimelineCheck {
     pub violations: Vec<String>,
     pub summary: Summary,
+    /// Time the server keeps per 10-minute window, by window start: the entries, less idle
+    /// time discarded or stopped.
+    kept_windows: BTreeMap<i64, i64>,
+}
+
+impl TimelineCheck {
+    /// Milliseconds the server keeps in windows starting at or after `from_wall_ms`, the way
+    /// the agent counts its "today" total (E09-S09).
+    #[must_use]
+    pub fn kept_since(&self, from_wall_ms: i64) -> i64 {
+        self.kept_windows
+            .range(from_wall_ms..)
+            .map(|(_, ms)| ms)
+            .sum()
+    }
 }
 
 impl fmt::Display for TimelineCheck {
@@ -124,6 +143,8 @@ struct Fold {
     /// Closed slots by ID: window, tracked seconds, and the usage batches seen for it.
     slots: HashMap<String, SlotRecord>,
     allowance: Option<Allowance>,
+    /// Idle spans discarded or stopped, in wall time.
+    discarded: Vec<(i64, i64)>,
 }
 
 #[derive(Debug, Default)]
@@ -264,7 +285,13 @@ impl Fold {
             }
         }
         self.summary.idle_periods += 1;
-        self.idle.insert(id.clone(), IdleRecord { resolved: false });
+        self.idle.insert(
+            id.clone(),
+            IdleRecord {
+                resolved: false,
+                since_wall_ms: at.wall_ms,
+            },
+        );
         self.pending_idle = Some(id);
         self.pending_since = Some(at.clone());
     }
@@ -279,7 +306,12 @@ impl Fold {
                 self.fail(format!("{label}: idle period {idle_id} resolved twice"));
                 return;
             }
-            Some(record) => record.resolved = true,
+            Some(record) => {
+                record.resolved = true;
+                if matches!(resolution, "discard" | "stop") {
+                    self.discarded.push((record.since_wall_ms, at.wall_ms));
+                }
+            }
         }
         if self.pending_idle.as_deref() == Some(idle_id) {
             self.pending_idle = None;
@@ -504,6 +536,7 @@ impl Fold {
                 self.summary.slot_seconds, self.summary.entry_ms
             ));
         }
+        let kept_windows = self.kept_windows();
         let made = self.allowance.as_ref().map(|allowance| allowance.inputs);
         let counted = self.summary.inputs;
         if let Some(made) = made
@@ -519,11 +552,44 @@ impl Fold {
         TimelineCheck {
             violations: self.violations,
             summary: self.summary,
+            kept_windows,
         }
+    }
+
+    /// The entries' time per window, less the discarded idle spans within them.
+    fn kept_windows(&self) -> BTreeMap<i64, i64> {
+        let mut windows = BTreeMap::new();
+        for entry in self.entries.values() {
+            let Some(end) = &entry.end else {
+                continue;
+            };
+            spread(&mut windows, entry.start.wall_ms, end.wall_ms, 1);
+            for &(from, to) in &self.discarded {
+                spread(
+                    &mut windows,
+                    from.max(entry.start.wall_ms),
+                    to.min(end.wall_ms),
+                    -1,
+                );
+            }
+        }
+        windows.retain(|_, ms| *ms != 0);
+        windows
     }
 
     fn fail(&mut self, violation: String) {
         self.violations.push(violation);
+    }
+}
+
+/// Adds (`sign` 1) or removes (-1) the span from `from` to `to` in each window it touches.
+fn spread(windows: &mut BTreeMap<i64, i64>, from: i64, to: i64, sign: i64) {
+    let mut cursor = from;
+    while cursor < to {
+        let start = cursor.div_euclid(WINDOW_MS) * WINDOW_MS;
+        let end = to.min(start + WINDOW_MS);
+        *windows.entry(start).or_insert(0) += sign * (end - cursor);
+        cursor = end;
     }
 }
 

@@ -204,6 +204,23 @@ impl Timekeeper {
         self.tracker.state()
     }
 
+    /// Time tracked from `from_wall_ms`. See [`Tracker::tracked_since`].
+    #[must_use]
+    pub fn tracked_since(&self, from_wall_ms: i64) -> Duration {
+        self.tracker.tracked_since(from_wall_ms)
+    }
+
+    /// The tracker's wall time at the last call. See [`Tracker::wall_now_ms`].
+    #[must_use]
+    pub fn wall_now_ms(&self) -> Option<i64> {
+        self.tracker.wall_now_ms()
+    }
+
+    /// The clock reading of the last call.
+    pub(crate) const fn last_reading(&self) -> &ClockReading {
+        &self.last
+    }
+
     /// The question the member is being asked, if any.
     #[must_use]
     pub fn prompt(&self) -> Option<Prompt> {

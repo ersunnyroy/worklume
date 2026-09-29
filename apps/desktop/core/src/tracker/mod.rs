@@ -22,8 +22,13 @@
 //! **Reboots.** A new boot re-anchors derived time to the wall clock, but never before the last
 //! accounted moment, so no 10-minute window comes around twice. Open slots stay open across the
 //! reboot: if the new boot lands in the same window, it adds to the same slot.
+//!
+//! **Today.** A small ledger keeps the tracked time per 10-minute window for two days, with idle
+//! time pending until the member decides, for the agent's day total (see
+//! [`Tracker::tracked_since`]).
 
 mod events;
+mod ledger;
 mod slots;
 mod state;
 
@@ -357,6 +362,22 @@ impl Tracker {
         &self.core.state
     }
 
+    /// Time tracked from `from_wall_ms` (a day's start, say) until the last call, within the last
+    /// two days. Idle time awaiting a decision counts; discarded idle time doesn't. Time is
+    /// counted by 10-minute window, and a window belongs to the day it starts in.
+    #[must_use]
+    pub fn tracked_since(&self, from_wall_ms: i64) -> Duration {
+        Duration::from_millis(self.core.slots.tracked_since(from_wall_ms))
+    }
+
+    /// The tracker's wall time at the last call, as its events are dated: derived from the
+    /// monotonic clock, so a changed system clock doesn't move it (see the module
+    /// documentation). The two days [`Tracker::tracked_since`] covers end here.
+    #[must_use]
+    pub fn wall_now_ms(&self) -> Option<i64> {
+        self.core.last_tick.as_ref().map(|moment| moment.wall_ms)
+    }
+
     /// Accounts time since the last call, with the input measured meanwhile. Call it about once
     /// a second; slots close and heartbeats are written as time passes.
     ///
@@ -475,6 +496,8 @@ impl Tracker {
             if begun.mono_ms > at.mono_ms {
                 begun = at.clone();
             }
+            // The time already counted since inactivity began now waits for the decision.
+            core.slots.hold_idle(begun.wall_ms, at.wall_ms);
             let idle = IdlePeriod {
                 idle_period_id: events::new_id(),
                 time_entry_id: entry.time_entry_id,
@@ -511,6 +534,10 @@ impl Tracker {
                 return Err(invalid(&core.state, Action::ResolveIdle));
             };
             out.push(events::idle_resolved(idle, resolution, decided_by, at)?);
+            core.slots.settle_idle(matches!(
+                resolution,
+                IdleResolution::Keep | IdleResolution::Reassign { .. }
+            ));
             core.state = match (resolution, &core.state) {
                 (IdleResolution::Stop, _) => TrackerState::Stopped,
                 (_, TrackerState::IdlePending { entry, .. }) => TrackerState::Running {

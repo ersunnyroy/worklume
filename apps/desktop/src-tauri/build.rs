@@ -1,7 +1,18 @@
 fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     // Listing app commands in the manifest puts them under Tauri's ACL: the webview may call a
     // command only if a capability grants its generated `allow-<command>` permission.
-    let manifest = tauri_build::AppManifest::new().commands(&["agent_status"]);
+    let manifest = tauri_build::AppManifest::new().commands(&[
+        "agent_status",
+        "agent_state",
+        "work_catalog",
+        "timer_start",
+        "timer_switch",
+        "timer_stop",
+        "timer_resume",
+        "break_start",
+        "break_end",
+        "idle_answer",
+    ]);
     tauri_build::try_build(tauri_build::Attributes::new().app_manifest(manifest))?;
     embed_common_controls_manifest_in_tests();
     Ok(())
