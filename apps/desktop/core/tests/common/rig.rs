@@ -6,7 +6,7 @@ use std::time::Duration;
 use worklume_core::timekeeper::{IdlePolicy, KeepIdle, Outcome, Prompt, Sensors, Timekeeper};
 use worklume_core::tracker::{Activity, IdleResolution, TrackerState};
 use worklume_core::usage::UsagePolicy;
-use worklume_platform::fake::{FakeBrowser, FakeClock, FakeIdle, FakeWindow};
+use worklume_platform::fake::{FakeBrowser, FakeClock, FakeIdle, FakeInput, FakeWindow};
 
 use super::{Harness, START_WALL_MS, seconds, target};
 
@@ -33,6 +33,7 @@ pub struct Rig {
     pub idle: Arc<FakeIdle>,
     pub window: Arc<FakeWindow>,
     pub browser: Arc<FakeBrowser>,
+    pub input: Arc<FakeInput>,
     pub keeper: Option<Timekeeper>,
     pub prompts: Vec<Prompt>,
 }
@@ -48,6 +49,7 @@ impl Rig {
             idle,
             window: Arc::new(FakeWindow::default()),
             browser: Arc::new(FakeBrowser::default()),
+            input: Arc::new(FakeInput::default()),
             keeper: None,
             prompts: Vec::new(),
         };
@@ -62,6 +64,7 @@ impl Rig {
             idle: Arc::clone(&self.idle) as _,
             window: Arc::clone(&self.window) as _,
             browser: Arc::clone(&self.browser) as _,
+            input: Arc::clone(&self.input) as _,
         };
         let (keeper, _) = Timekeeper::open(
             Arc::clone(self.harness.store()),

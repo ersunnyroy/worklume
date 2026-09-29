@@ -391,8 +391,38 @@ export interface components {
             idle_seconds: number;
             /** @enum {string} */
             input_method: "hooks" | "idle_poll" | "portal";
+            /** @description Input timing statistics for the automated-input detector (E33-S03): the rhythm of key presses, clicks, pointer movements and scroll gestures while the timer ran and the member wasn't idle. Pointer or scroll reports less than 250 ms apart are one movement; intervals over 60 s are pauses and not counted; nothing spans idle time, a pause, a break or a restart. The device computes these from event times it then forgets: no event time, key or pointer position ever leaves it. Null when the slot had no input the agent could see (see `input_method`). Input features are sensitive: the server stores them with the slot for the detector, and no endpoint returns them. */
+            input_features: {
+                /** @constant */
+                version: 1;
+                /** @description Inputs of each kind; at least one in all. */
+                events: {
+                    key: number;
+                    pointer: number;
+                    click: number;
+                    scroll: number;
+                };
+                /** @description Key presses as a share of all inputs, to 3 decimals. */
+                keyboard_share: number;
+                /** @description Intervals between consecutive inputs of any kind, and of each kind. An interval belongs to the slot of the input that ends it. */
+                intervals: {
+                    any: components["schemas"]["InputIntervals"];
+                    key: components["schemas"]["InputIntervals"];
+                    pointer: components["schemas"]["InputIntervals"];
+                    click: components["schemas"]["InputIntervals"];
+                    scroll: components["schemas"]["InputIntervals"];
+                };
+            } | null;
             flags: ("partial_slot" | "clock_adjusted")[];
         };
+        /** @description The intervals of one kind in a slot, or null when there were none. The statistics are null below 5 intervals, too few to judge a rhythm; `cv` is also null when every interval was 0 ms. */
+        InputIntervals: {
+            count: number;
+            /** @description Shannon entropy of the intervals over 16 log2 buckets of milliseconds, to 3 decimals: near 0 for a machine repeating one interval. */
+            entropy_bits: number | null;
+            /** @description Coefficient of variation of the intervals (standard deviation over mean), to 3 decimals. */
+            cv: number | null;
+        } | null;
     };
     responses: {
         /** @description An error, described as RFC 9457 problem details. */

@@ -9,8 +9,8 @@ use zeroize::Zeroizing;
 
 use crate::{
     ActiveWindow, BrowserTab, BrowserUrl, Clock, ClockError, ClockReading, ForegroundApp,
-    IdleError, IdleSource, Secret, SecretStore, SecretStoreError, SecretStoreErrorKind,
-    SensorError,
+    IdleError, IdleSource, InputActivity, InputEvent, Secret, SecretStore, SecretStoreError,
+    SecretStoreErrorKind, SensorError,
 };
 
 /// A credential store in memory. It can be switched to fail like a locked keychain.
@@ -283,6 +283,50 @@ impl BrowserUrl for FakeBrowser {
             return Err(error);
         }
         Ok(lock(&self.tabs).get(&app.identifier).cloned())
+    }
+}
+
+/// Input events the test pushes, drained like a real reader's buffer. It can fail like a
+/// reader without permission, or on Wayland; a failing reader loses what it held.
+#[derive(Debug, Default)]
+pub struct FakeInput {
+    events: Mutex<Vec<InputEvent>>,
+    error: Mutex<Option<SensorError>>,
+    drains: Mutex<u64>,
+}
+
+impl FakeInput {
+    /// Events happen, oldest first.
+    pub fn push(&self, events: impl IntoIterator<Item = InputEvent>) {
+        lock(&self.events).extend(events);
+    }
+
+    /// Makes drains fail with `error`, or work again with `None`.
+    pub fn set_error(&self, error: Option<SensorError>) {
+        *lock(&self.error) = error;
+    }
+
+    /// Events not drained yet.
+    #[must_use]
+    pub fn pending(&self) -> usize {
+        lock(&self.events).len()
+    }
+
+    /// How many times the buffer was drained, successfully or not.
+    #[must_use]
+    pub fn drains(&self) -> u64 {
+        *lock(&self.drains)
+    }
+}
+
+impl InputActivity for FakeInput {
+    fn drain(&self) -> Result<Vec<InputEvent>, SensorError> {
+        *lock(&self.drains) += 1;
+        let events = std::mem::take(&mut *lock(&self.events));
+        match lock(&self.error).clone() {
+            Some(error) => Err(error),
+            None => Ok(events),
+        }
     }
 }
 

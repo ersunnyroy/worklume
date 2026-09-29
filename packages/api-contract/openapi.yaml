@@ -681,6 +681,7 @@ components:
         - mouse_seconds
         - idle_seconds
         - input_method
+        - input_features
         - flags
       properties:
         slot_start:
@@ -721,9 +722,93 @@ components:
         input_method:
           type: string
           enum: [hooks, idle_poll, portal]
+        input_features:
+          type: [object, 'null']
+          description: >-
+            Input timing statistics for the automated-input detector (E33-S03): the rhythm of
+            key presses, clicks, pointer movements and scroll gestures while the timer ran and
+            the member wasn't idle. Pointer or scroll reports less than 250 ms apart are one
+            movement; intervals over 60 s are pauses and not counted; nothing spans idle time,
+            a pause, a break or a restart. The device computes these from event times it then
+            forgets: no event time, key or pointer position ever leaves it. Null when the slot
+            had no input the agent could see (see `input_method`). Input features are
+            sensitive: the server stores them with the slot for the detector, and no endpoint
+            returns them.
+          additionalProperties: false
+          required: [version, events, keyboard_share, intervals]
+          properties:
+            version:
+              type: integer
+              const: 1
+            events:
+              type: object
+              description: Inputs of each kind; at least one in all.
+              additionalProperties: false
+              required: [key, pointer, click, scroll]
+              properties:
+                key:
+                  type: integer
+                  minimum: 0
+                pointer:
+                  type: integer
+                  minimum: 0
+                click:
+                  type: integer
+                  minimum: 0
+                scroll:
+                  type: integer
+                  minimum: 0
+            keyboard_share:
+              type: number
+              minimum: 0
+              maximum: 1
+              description: Key presses as a share of all inputs, to 3 decimals.
+            intervals:
+              type: object
+              description: >-
+                Intervals between consecutive inputs of any kind, and of each kind. An interval
+                belongs to the slot of the input that ends it.
+              additionalProperties: false
+              required: [any, key, pointer, click, scroll]
+              properties:
+                any:
+                  $ref: '#/components/schemas/InputIntervals'
+                key:
+                  $ref: '#/components/schemas/InputIntervals'
+                pointer:
+                  $ref: '#/components/schemas/InputIntervals'
+                click:
+                  $ref: '#/components/schemas/InputIntervals'
+                scroll:
+                  $ref: '#/components/schemas/InputIntervals'
         flags:
           type: array
           uniqueItems: true
           items:
             type: string
             enum: [partial_slot, clock_adjusted]
+    InputIntervals:
+      type: [object, 'null']
+      description: >-
+        The intervals of one kind in a slot, or null when there were none. The statistics are
+        null below 5 intervals, too few to judge a rhythm; `cv` is also null when every
+        interval was 0 ms.
+      additionalProperties: false
+      required: [count, entropy_bits, cv]
+      properties:
+        count:
+          type: integer
+          minimum: 1
+        entropy_bits:
+          type: [number, 'null']
+          minimum: 0
+          maximum: 4
+          description: >-
+            Shannon entropy of the intervals over 16 log2 buckets of milliseconds, to 3
+            decimals: near 0 for a machine repeating one interval.
+        cv:
+          type: [number, 'null']
+          minimum: 0
+          description: >-
+            Coefficient of variation of the intervals (standard deviation over mean), to 3
+            decimals.

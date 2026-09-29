@@ -13,7 +13,7 @@ use common::rig::{Rig, policy};
 use common::{Harness, seconds, target, uuid};
 use serde_json::{Value, json};
 use worklume_core::timekeeper::KeepIdle;
-use worklume_core::tracker::Activity;
+use worklume_core::tracker::{Activity, Observation};
 use worklume_core::usage::{AppUse, PrivateWindows, UsageLevel, UsagePolicy, UsageSample};
 use worklume_platform::{BrowserTab, ForegroundApp, SensorError};
 
@@ -278,7 +278,11 @@ fn the_tracker_itself_counts_no_usage_while_idle() {
     let tick = |harness: &mut Harness, tracker: &mut worklume_core::tracker::Tracker, n| {
         for _ in 0..n {
             let now = harness.clock.advance_secs(1);
-            tracker.tick_with(&now, Activity::NONE, &sample).unwrap();
+            let observed = Observation {
+                usage: &sample,
+                input: &[],
+            };
+            tracker.tick_with(&now, Activity::NONE, &observed).unwrap();
         }
         harness.clock.now()
     };

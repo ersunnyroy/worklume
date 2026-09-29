@@ -8,7 +8,8 @@
 //!
 //! So far the crate identifies the platform the agent runs on, which decides the adapter, keeps
 //! secrets in the OS credential store, and reads the device's clocks. It also defines the idle
-//! source, the foreground app and the browser tab, whose adapters come with the per-OS stories.
+//! source, the foreground app, the browser tab and input events, whose adapters come with the
+//! per-OS stories.
 
 mod clock;
 mod detect;
@@ -16,10 +17,12 @@ mod detect;
 pub mod fake;
 mod foreground;
 mod idle;
+mod input;
 mod secret;
 
 pub use clock::{Clock, ClockError, ClockReading, OsClock};
 pub use detect::{LinuxSession, OperatingSystem, PlatformInfo, linux_session_from_env};
 pub use foreground::{ActiveWindow, BrowserTab, BrowserUrl, ForegroundApp, SensorError};
 pub use idle::{IdleError, IdleSource};
+pub use input::{InputActivity, InputEvent, InputKind};
 pub use secret::{OsSecretStore, Secret, SecretStore, SecretStoreError, SecretStoreErrorKind};

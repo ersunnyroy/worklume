@@ -24,17 +24,26 @@
 //! began; a long absence with no idle time also stops the timer. The resulting `idle.resolved`
 //! says the policy decided. The question after a long sleep is asked under `always` too: it is
 //! about resuming, not about idle time.
+//!
+//! **Input events** (E09-S13) are drained from the reader on every call, whatever the state, so
+//! the reader never holds more than a call's worth, and are handed to the tracker with the time
+//! they fall in, which counts only their timing (see [`crate::input`]). If the call fails, they
+//! wait for the next one, up to [`MAX_INPUT_BACKLOG`]. Those drained after a sleep happened
+//! around it, in time that isn't tracked, and are dropped.
 
 use std::sync::Arc;
 use std::time::Duration;
 
 use uuid::Uuid;
-use worklume_platform::{ActiveWindow, BrowserUrl, Clock, ClockError, ClockReading, IdleSource};
+use worklume_platform::{
+    ActiveWindow, BrowserUrl, Clock, ClockError, ClockReading, IdleSource, InputActivity,
+    InputEvent,
+};
 use worklume_storage::{StorageError, Store, Timestamp};
 
 use crate::tracker::{
-    Activity, DecidedBy, IdlePeriod, IdleResolution, PauseReason, Recovery, Tracker, TrackerConfig,
-    TrackerError, TrackerState, WorkTarget,
+    Activity, DecidedBy, IdlePeriod, IdleResolution, Observation, PauseReason, Recovery, Tracker,
+    TrackerConfig, TrackerError, TrackerState, WorkTarget,
 };
 use crate::usage::{UsagePolicy, UsageSample};
 
@@ -43,6 +52,10 @@ const MIN_SLEEP_MS: i64 = 1_000;
 /// Inactivity before a sleep shorter than this is not recorded as idle time: slots count whole
 /// seconds.
 const MIN_IDLE_MS: i64 = 1_000;
+/// Input events kept for the next call while calls fail: a minute of reports at 2,000 a
+/// second. Beyond it the oldest are dropped; by then the tracker counts the time as a gap
+/// anyway.
+pub const MAX_INPUT_BACKLOG: usize = 120_000;
 
 /// What happens to idle time: the organization's `idle.keep` policy.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -119,6 +132,8 @@ pub struct Sensors {
     pub window: Arc<dyn ActiveWindow>,
     /// The browser's active tab, for URL usage (E09-S12).
     pub browser: Arc<dyn BrowserUrl>,
+    /// Input events, for input timing features (E09-S13).
+    pub input: Arc<dyn InputActivity>,
 }
 
 /// The tracker on the device's clock. See the module documentation.
@@ -128,6 +143,9 @@ pub struct Timekeeper {
     idle: Arc<dyn IdleSource>,
     window: Arc<dyn ActiveWindow>,
     browser: Arc<dyn BrowserUrl>,
+    input: Arc<dyn InputActivity>,
+    /// Input events drained but not yet handed to the tracker, oldest first.
+    input_backlog: Vec<InputEvent>,
     policy: IdlePolicy,
     usage_policy: UsagePolicy,
     /// The previous reading, to spot a sleep.
@@ -168,6 +186,8 @@ impl Timekeeper {
             idle: sensors.idle,
             window: sensors.window,
             browser: sensors.browser,
+            input: sensors.input,
+            input_backlog: Vec::new(),
             policy,
             usage_policy: UsagePolicy::OFF,
             last: reading,
@@ -347,6 +367,7 @@ impl Timekeeper {
         action: impl FnOnce(&mut Self, &Timestamp) -> Result<(), TimekeeperError>,
     ) -> Result<Outcome, TimekeeperError> {
         let before = self.prompt();
+        self.drain_input();
         let reading = self.clock.read()?;
         let now = timestamp(&reading)?;
         let slept = self.catch_up(&reading, &now, activity, usage)?;
@@ -385,9 +406,16 @@ impl Timekeeper {
         let slept = if let Some((asleep_at, slept_ms)) = asleep {
             self.fall_asleep(&asleep_at, slept_ms, now, activity)?;
             self.tracker.tick(now, Activity::NONE)?;
+            // Input around the sleep fell in time that isn't tracked.
+            self.input_backlog.clear();
             Some(Duration::from_millis(u64::try_from(slept_ms).unwrap_or(0)))
         } else {
-            self.tracker.tick_with(now, activity, usage)?;
+            let observed = Observation {
+                usage,
+                input: &self.input_backlog,
+            };
+            self.tracker.tick_with(now, activity, &observed)?;
+            self.input_backlog.clear();
             None
         };
         // Only once the sleep is dealt with: a failure above sees the same sleep next time.
@@ -448,6 +476,16 @@ impl Timekeeper {
             self.tracker.resume(now)?;
         }
         Ok(())
+    }
+
+    /// Takes the reader's events into the backlog. A reader that cannot see input (no permission,
+    /// or Wayland) gives none: the slots then carry no input features.
+    fn drain_input(&mut self) {
+        if let Ok(events) = self.input.drain() {
+            self.input_backlog.extend(events);
+        }
+        let excess = self.input_backlog.len().saturating_sub(MAX_INPUT_BACKLOG);
+        self.input_backlog.drain(..excess);
     }
 
     /// Records idle time once inactivity reaches the timeout.

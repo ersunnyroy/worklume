@@ -28,6 +28,43 @@
         "partial_slot"
       ],
       "idle_seconds": 0,
+      "input_features": {
+        "events": {
+          "click": 60,
+          "key": 1260,
+          "pointer": 84,
+          "scroll": 38
+        },
+        "intervals": {
+          "any": {
+            "count": 1441,
+            "cv": 0.415,
+            "entropy_bits": 1.576
+          },
+          "click": {
+            "count": 59,
+            "cv": 0.041,
+            "entropy_bits": 0.124
+          },
+          "key": {
+            "count": 1259,
+            "cv": 0.31,
+            "entropy_bits": 1.141
+          },
+          "pointer": {
+            "count": 83,
+            "cv": 0.0,
+            "entropy_bits": 0.0
+          },
+          "scroll": {
+            "count": 37,
+            "cv": 0.054,
+            "entropy_bits": 0.179
+          }
+        },
+        "keyboard_share": 0.874,
+        "version": 1
+      },
       "input_method": "hooks",
       "keyboard_seconds": 60,
       "mouse_seconds": 24,
@@ -213,6 +250,43 @@
         "partial_slot"
       ],
       "idle_seconds": 30,
+      "input_features": {
+        "events": {
+          "click": 15,
+          "key": 315,
+          "pointer": 21,
+          "scroll": 9
+        },
+        "intervals": {
+          "any": {
+            "count": 358,
+            "cv": 0.408,
+            "entropy_bits": 1.569
+          },
+          "click": {
+            "count": 13,
+            "cv": 0.0,
+            "entropy_bits": 0.0
+          },
+          "key": {
+            "count": 313,
+            "cv": 0.305,
+            "entropy_bits": 1.145
+          },
+          "pointer": {
+            "count": 19,
+            "cv": 0.0,
+            "entropy_bits": 0.0
+          },
+          "scroll": {
+            "count": 7,
+            "cv": 0.0,
+            "entropy_bits": 0.0
+          }
+        },
+        "keyboard_share": 0.875,
+        "version": 1
+      },
       "input_method": "hooks",
       "keyboard_seconds": 52,
       "mouse_seconds": 21,

@@ -13,11 +13,14 @@ use worklume_core::tracker::{
     Activity, IdleResolution, InputMethod, TrackerConfig, TrackerError, TrackerState, WorkTarget,
 };
 use worklume_core::usage::{PrivateWindows, UsageLevel, UsagePolicy};
-use worklume_platform::fake::{FakeBrowser, FakeClock, FakeIdle, FakeWindow, MemorySecretStore};
-use worklume_platform::{BrowserTab, ClockReading, ForegroundApp, SensorError};
+use worklume_platform::fake::{
+    FakeBrowser, FakeClock, FakeIdle, FakeInput, FakeWindow, MemorySecretStore,
+};
+use worklume_platform::{BrowserTab, ClockReading, ForegroundApp, InputActivity, SensorError};
 use worklume_storage::{StorageError, Store};
 use worklume_sync::envelope;
 
+use crate::hands::{Hands, InputLedger};
 use crate::server::{FakeServer, Network};
 
 /// 2026-09-21 09:00:00 UTC, a Monday.
@@ -108,6 +111,25 @@ impl UsageAllowance {
     }
 }
 
+/// The most the server may receive: the most detail any usage policy allowed, and the inputs
+/// the member (or a jiggler) made, which slots may count but never exceed.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Allowance {
+    pub usage: UsageAllowance,
+    pub inputs: InputLedger,
+}
+
+/// What produces input while time passes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Input {
+    /// Nobody: the member is away.
+    Nobody,
+    /// The member works.
+    Person,
+    /// A jiggler moves the pointer every so many milliseconds while the member is away.
+    Jiggler { every_ms: i64 },
+}
+
 /// A failure of the harness itself, or of the agent in a way no scenario asks for.
 #[derive(Debug, thiserror::Error)]
 pub enum SimError {
@@ -145,12 +167,14 @@ pub struct Device {
     idle: Arc<FakeIdle>,
     window: Arc<FakeWindow>,
     browser: Arc<FakeBrowser>,
+    input: Arc<FakeInput>,
+    hands: Hands,
     secrets: MemorySecretStore,
     dir: TempDir,
     config: DeviceConfig,
     policy: IdlePolicy,
     usage: UsagePolicy,
-    allowance: UsageAllowance,
+    usage_allowance: UsageAllowance,
     agent: Option<Agent>,
     down_since: Option<ClockReading>,
     untracked: Vec<Span>,
@@ -185,12 +209,14 @@ impl Device {
             idle,
             window,
             browser: Arc::new(FakeBrowser::default()),
+            input: Arc::new(FakeInput::default()),
+            hands: Hands::default(),
             secrets: MemorySecretStore::default(),
             dir: TempDir::new()?,
             config,
             policy: config.policy,
             usage: config.usage,
-            allowance: UsageAllowance::of(config.usage),
+            usage_allowance: UsageAllowance::of(config.usage),
             agent: None,
             down_since: None,
             untracked: Vec::new(),
@@ -269,13 +295,13 @@ impl Device {
 
     // --- The device --------------------------------------------------------------------------
 
-    /// The member works for `duration`: input on every tick.
+    /// The member works for `duration`: input on every tick, typed and pointed unevenly.
     ///
     /// # Errors
     ///
     /// Fails when the agent fails.
     pub fn work(&mut self, duration: Duration) -> Result<(), SimError> {
-        self.pass(duration, true)
+        self.pass(duration, Input::Person)
     }
 
     /// The member is away for `duration`; the device stays awake and the agent keeps ticking.
@@ -284,31 +310,61 @@ impl Device {
     ///
     /// Fails when the agent fails.
     pub fn away(&mut self, duration: Duration) -> Result<(), SimError> {
-        self.pass(duration, false)
+        self.pass(duration, Input::Nobody)
     }
 
-    fn pass(&mut self, duration: Duration, input: bool) -> Result<(), SimError> {
+    /// The member is away for `duration` while a jiggler moves the pointer `every` so often,
+    /// which the OS counts as input.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the agent fails.
+    pub fn jiggle(&mut self, duration: Duration, every: Duration) -> Result<(), SimError> {
+        let every_ms = millis_i64(every).max(1);
+        self.pass(duration, Input::Jiggler { every_ms })
+    }
+
+    fn pass(&mut self, duration: Duration, input: Input) -> Result<(), SimError> {
         let mut left = duration;
+        let mut next_jiggle = match input {
+            Input::Jiggler { every_ms } => self.clock.reading().mono_ms + every_ms,
+            _ => 0,
+        };
         while !left.is_zero() {
             let step = left.min(self.config.tick);
             left -= step;
+            let from = self.clock.reading().mono_ms;
             self.clock.advance(step);
-            if input {
-                self.idle.input();
-            }
-            let activity = if input {
-                Activity {
+            let to = self.clock.reading().mono_ms;
+            let Some(agent) = self.agent.as_mut() else {
+                continue;
+            };
+            let events = match input {
+                Input::Nobody => Vec::new(),
+                Input::Person => self.hands.person(from, to),
+                Input::Jiggler { every_ms } => {
+                    self.hands.jiggler(from, to, &mut next_jiggle, every_ms)
+                }
+            };
+            let activity = match input {
+                Input::Person => Activity {
                     active_ms: millis_u64(step) * 3 / 4,
                     keyboard_ms: Some(millis_u64(step) / 2),
                     mouse_ms: Some(millis_u64(step) / 4),
-                }
-            } else {
-                Activity::NONE
+                },
+                _ if events.is_empty() => Activity::NONE,
+                _ => Activity {
+                    active_ms: 1_000.min(millis_u64(step)),
+                    keyboard_ms: Some(0),
+                    mouse_ms: Some(1_000.min(millis_u64(step))),
+                },
             };
-            if let Some(agent) = self.agent.as_mut() {
-                let outcome = agent.keeper.tick(activity)?;
-                self.record(outcome);
+            if input == Input::Person || !events.is_empty() {
+                self.idle.input();
             }
+            self.input.push(events);
+            let outcome = agent.keeper.tick(activity)?;
+            self.record(outcome);
         }
         Ok(())
     }
@@ -389,11 +445,14 @@ impl Device {
     fn launch(&mut self) -> Result<(), SimError> {
         let (store, _) = Store::open(self.dir.path(), &self.secrets)?;
         let store = Arc::new(store);
+        // A new agent's input reader starts empty.
+        drop(self.input.drain());
         let sensors = Sensors {
             clock: Arc::clone(&self.clock) as _,
             idle: Arc::clone(&self.idle) as _,
             window: Arc::clone(&self.window) as _,
             browser: Arc::clone(&self.browser) as _,
+            input: Arc::clone(&self.input) as _,
         };
         let (mut keeper, recovery) = Timekeeper::open(
             Arc::clone(&store),
@@ -504,17 +563,26 @@ impl Device {
     /// Replaces the app and URL policy, as a config update would (E09-S06).
     pub fn set_usage_policy(&mut self, policy: UsagePolicy) {
         self.usage = policy;
-        self.allowance.widen(policy);
+        self.usage_allowance.widen(policy);
         if let Some(agent) = self.agent.as_mut() {
             agent.keeper.set_usage_policy(policy);
         }
         self.note(format!("usage policy {policy:?}"));
     }
 
-    /// The most detail any usage policy during the run allowed.
+    /// The most the server may receive after this run so far.
     #[must_use]
-    pub const fn usage_allowance(&self) -> &UsageAllowance {
-        &self.allowance
+    pub fn allowance(&self) -> Allowance {
+        Allowance {
+            usage: self.usage_allowance.clone(),
+            inputs: self.hands.ledger(),
+        }
+    }
+
+    /// The inputs made so far.
+    #[must_use]
+    pub const fn inputs(&self) -> InputLedger {
+        self.hands.ledger()
     }
 
     /// Puts something else in front of the member.
@@ -529,7 +597,7 @@ impl Device {
                     format!("Site {site} - Google Chrome")
                 };
                 if private {
-                    self.allowance.private_titles.insert(title.clone());
+                    self.usage_allowance.private_titles.insert(title.clone());
                 }
                 self.window.set(Some(ForegroundApp {
                     identifier: BROWSER.to_owned(),

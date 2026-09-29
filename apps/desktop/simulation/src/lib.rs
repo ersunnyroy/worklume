@@ -1,8 +1,9 @@
 //! The simulation harness (E09-S14): the agent core on a simulated device.
 //!
-//! - A [`Device`] runs the real timekeeper, tracker and encrypted store on a fake clock and a
-//!   fake idle source. It can sleep, reboot, have its clock changed, lose its agent to a crash
-//!   (also in the middle of a write), and go offline.
+//! - A [`Device`] runs the real timekeeper, tracker and encrypted store on a fake clock, idle
+//!   source, foreground window, browser and input reader. The member types and points
+//!   unevenly, or leaves a jiggler running. The device can sleep, reboot, have its clock
+//!   changed, lose its agent to a crash (also in the middle of a write), and go offline.
 //! - A [`FakeServer`] receives the outbox as `POST /v1/desktop/sync` would: each event once, by
 //!   `event_id`, with repeats reported as duplicates.
 //! - [`check`] folds what the server received into time entries, idle periods, breaks and slots,
@@ -19,11 +20,15 @@
 //! injection, so the app must never depend on it; the crate-boundary rules refuse that.
 
 mod device;
+mod hands;
 mod script;
 mod server;
 mod timeline;
 
-pub use device::{Device, DeviceConfig, Focus, START_WALL_MS, SimError, Span, UsageAllowance};
+pub use device::{
+    Allowance, Device, DeviceConfig, Focus, START_WALL_MS, SimError, Span, UsageAllowance,
+};
+pub use hands::InputLedger;
 pub use script::{Answer, Report, Step, run};
 pub use server::{FakeServer, Network, Verdict};
 pub use timeline::{Summary, TimelineCheck, check, parse_rfc3339_ms};

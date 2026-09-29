@@ -451,6 +451,74 @@ addresses, idle, switching apps, unreadable sensors, a restart, many titles and
 project switches. `usage::tests` covers URL reduction. The simulation harness checks usage in
 every generated script. Mutation checks: 10 of 10 caught.
 
+## Input timing features
+
+E09-S13: `worklume-core::input`, with the `InputActivity` trait in `worklume-platform`. Each
+slot carries statistics about the rhythm of input, so the server's automated-input detector
+(E33-S03) can tell a person from a mouse jiggler or an auto-clicker. No keystroke log is
+needed: no event time, key or pointer position ever leaves the device (the acceptance
+criterion).
+
+**The reader.** `InputActivity::drain` returns the events since the last call: kind (key,
+pointer, click, scroll) and monotonic time, nothing else. The per-OS readers come with E10-S03,
+E11-S03 and E12-S03. They must stamp events with the agent's clock (OS event times count on
+other clocks: macOS's stop during sleep), skip key auto-repeat, and bound their buffer.
+Wayland has no global input events, so its reader reports `Unsupported`.
+
+**What counts as one input.** A key press, a click, a pointer movement or a scroll gesture.
+Pointer and scroll reports less than 250 ms apart are one movement: a mouse reports its
+position many times a second at a steady rate, which would make every hand look like a
+machine.
+
+**Intervals** are measured between consecutive inputs of any kind, and of each kind, only
+while the timer runs and the member isn't idle. One over 60 s is a pause, not a rhythm, and
+isn't counted. Idle time, a pause, a break, a gap, a reboot or an agent restart forgets the
+previous input, so no interval spans one. An interval belongs to the slot of the input that
+ends it.
+
+**Kept and sent.** A slot keeps only totals: inputs per kind, and per interval kind a histogram
+of 16 log2 buckets of milliseconds with count, sum and sum of squares. The last input's time,
+needed to measure the next interval, stays in memory and is never saved. `slot.closed` sends
+less still, as `input_features` (version 1):
+
+| Field            | Meaning                                                                   |
+| ---------------- | ------------------------------------------------------------------------- |
+| `events`         | Inputs per kind                                                           |
+| `keyboard_share` | Key presses as a share of all inputs                                      |
+| `intervals.*`    | For `any` and each kind: `count`, `entropy_bits` (0–4) and `cv` (SD/mean) |
+
+Statistics are null below 5 intervals, too few to judge. The whole object is null when the
+slot had no input the agent could see. Values are rounded to 3 decimals. The histogram itself
+isn't sent: typing rhythm is a biometric, so only what the detector needs leaves the device.
+A jiggler or an auto-clicker repeats one interval, so its entropy and variation are 0; a
+person's are well above.
+
+**The timekeeper** drains the reader on every call, whatever the state, so the reader never
+holds more than a call's worth. Events are handed to the tracker with the time they fall in.
+If the call fails, they wait for the next one, up to 120,000 events. Events drained after a
+sleep happened around it, in untracked time, and are dropped.
+
+**Open decision.** The architecture has the agent always send the features. Whether they
+should be sent, or kept by the server, only when an organization turns automated-input
+detection on is for E33-S01 (the organization's AI switch) to decide.
+
+**Tested.** `core/tests/input.rs`:
+
+- no input's time, monotonic or wall, is in the journal or the outbox, across a restart and a
+  sleep (the acceptance criterion);
+- the saved state doesn't grow with input;
+- a jiggler and a person give different features;
+- input counts only while the timer runs and the member isn't idle;
+- no interval spans a stop, a restart or a sleep;
+- an interval belongs to the slot of its later input;
+- a failed save counts its input once, and input around a sleep is dropped;
+- a reader that can't see input sends null.
+
+`input::tests` covers movements, pauses, entropy and variation. The contract tests refuse
+extra fields such as event times or buckets. The harness types and points unevenly on every
+`Work` step, has a `Jiggle` step, and checks the features in every script. Mutation checks: 11
+of 11 caught.
+
 ## Simulation harness
 
 E09-S14: `apps/desktop/simulation` (`worklume-simulation`) runs the real agent core on a
@@ -458,9 +526,11 @@ simulated device. Its scripted and generated scenarios check the agent end to en
 store to what the server received.
 
 **The device.** A `Device` runs the real `Timekeeper`, tracker and encrypted store in a
-temporary folder, on `FakeClock`, `FakeIdle` and `MemorySecretStore`. It can:
+temporary folder, on `FakeClock`, `FakeIdle`, `FakeWindow`, `FakeBrowser`, `FakeInput` and
+`MemorySecretStore`. It can:
 
-- work (input every tick), be away, or sleep;
+- work (input every tick: uneven typing, clicks, mouse movements and scrolls, the same on
+  every run), be away, be away with a jiggler running, or sleep;
 - have its wall clock moved, or reboot;
 - lose its agent to a crash, including in the middle of a store write (the store's
   `fault-injection` feature). The watchdog's one-second restart is modelled.
@@ -493,6 +563,9 @@ slots, and reports:
   tracked;
 - usage detail beyond the most any policy in the run allowed: titles or paths when none was
   allowed, a private window's title or path, or a query or fragment in a path;
+- input features that contradict themselves (a wrong share, more intervals than inputs,
+  statistics from fewer than 5 intervals, values out of range), or slots counting more inputs
+  of a kind than were made;
 - anything left open at the end, or events that never reached the server.
 
 `tests/checker.rs` damages a clean day in each of these ways and expects the report, so the
@@ -505,14 +578,16 @@ checker can't pass everything by accident.
 - a sleep under each keep-idle policy;
 - clock changes;
 - crashes, including one mid-write;
-- a reboot.
+- a reboot;
+- a jiggler that keeps the timer running: no idle time, but its slots have entropy and
+  variation 0 while the member's don't.
 
 **Generated scripts** (`tests/properties.rs`): proptest builds scripts of up to 40 random
 steps under random idle and usage policies, with the member switching between an editor,
-browser tabs (some private), the desktop and an app the OS won't describe. It shrinks a failure
-to a short script. The report prints
-the script and a log of what happened. `PROPTEST_CASES` sets the count: 64 locally, 256 in CI.
-10,000 passed before merging.
+browser tabs (some private), the desktop and an app the OS won't describe, and sometimes
+leaving a jiggler running. It shrinks a failure to a short script. The report prints the
+script and a log of what happened. `PROPTEST_CASES` sets the count: 64 locally, 256 in CI.
+10,000 passed before merging (again with E09-S13's input steps).
 
 **What it found.** Three defects that the unit tests had missed, fixed with the harness:
 

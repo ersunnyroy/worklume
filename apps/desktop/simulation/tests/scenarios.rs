@@ -1,6 +1,7 @@
 //! Named scenarios (E09-S14): offline, sleep, clock changes, crashes and reboots, each played
 //! on a simulated device and checked end to end, from the agent's store to what the server
-//! received.
+//! received. And a jiggler (E09-S13), which keeps the timer running but not the rhythm of a
+//! person.
 
 #![allow(
     clippy::unwrap_used,
@@ -9,8 +10,9 @@
 
 use std::time::Duration;
 
+use serde_json::Value;
 use worklume_core::timekeeper::{IdlePolicy, KeepIdle};
-use worklume_simulation::{Answer, DeviceConfig, Report, Step, run};
+use worklume_simulation::{Answer, Device, DeviceConfig, Report, Step, check, run};
 
 const fn mins(minutes: u64) -> Duration {
     Duration::from_secs(minutes * 60)
@@ -208,4 +210,71 @@ fn lost_answers_are_sent_again_and_stored_once() {
     );
     assert!(report.duplicates >= 2, "{report}");
     assert_eq!(tracked_seconds(&report), 40 * 60);
+}
+
+#[test]
+fn a_jiggler_keeps_the_timer_running_but_not_the_rhythm_of_a_person() {
+    let mut device = Device::new(DeviceConfig::default()).unwrap();
+    // 09:00 to 09:20 working, 09:20 to 09:50 away with a jiggler, 09:50 to 10:00 working.
+    for step in [
+        Step::Start(1),
+        Step::Work(mins(20)),
+        Step::Jiggle {
+            duration: mins(30),
+            every: Duration::from_secs(30),
+        },
+        Step::Work(mins(10)),
+        Step::Stop,
+    ] {
+        device.perform(step).unwrap();
+    }
+    device.wind_down().unwrap();
+    let result = check(
+        device.server().events(),
+        device.untracked(),
+        &device.allowance(),
+    );
+    assert!(result.violations.is_empty(), "{result}");
+    // The OS saw input, so no idle time: only the input's rhythm gives the jiggler away.
+    assert_eq!(result.summary.idle_periods, 0);
+    assert_eq!(result.summary.slot_seconds, 60 * 60);
+    assert_eq!(
+        result.summary.inputs,
+        device.inputs(),
+        "all of it while tracking"
+    );
+
+    let slots: Vec<&Value> = device
+        .server()
+        .events()
+        .iter()
+        .filter(|event| event["type"] == "slot.closed")
+        .map(|event| &event["payload"]["input_features"])
+        .collect();
+    assert_eq!(slots.len(), 6);
+    for person in [slots[0], slots[1], slots[5]] {
+        for kind in ["key", "pointer"] {
+            let intervals = &person["intervals"][kind];
+            assert!(
+                intervals["entropy_bits"].as_f64().unwrap() >= 1.0,
+                "{person}"
+            );
+            assert!(intervals["cv"].as_f64().unwrap() >= 0.3, "{person}");
+        }
+    }
+    assert_eq!(slots[2]["events"]["key"], 0);
+    // 09:30 and 09:40: nothing but the jiggler, a movement every 30 s.
+    for jiggler in [slots[3], slots[4]] {
+        assert_eq!(
+            jiggler["events"],
+            serde_json::json!({"key": 0, "pointer": 20, "click": 0, "scroll": 0})
+        );
+        for kind in ["any", "pointer"] {
+            assert_eq!(
+                jiggler["intervals"][kind],
+                serde_json::json!({"count": 20, "entropy_bits": 0.0, "cv": 0.0}),
+                "{jiggler}"
+            );
+        }
+    }
 }

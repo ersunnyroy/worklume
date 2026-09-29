@@ -6,7 +6,9 @@ use std::fmt;
 
 use serde_json::Value;
 
-use crate::device::{Span, UsageAllowance};
+use crate::device::{Allowance, Span};
+use crate::hands::InputLedger;
+use worklume_core::input::{FEATURES_VERSION, MIN_INTERVALS};
 use worklume_core::usage::UsageLevel;
 
 /// A moment in an event: its wall time (RFC 3339 in the event) and its monotonic reading.
@@ -46,6 +48,10 @@ pub struct Summary {
     pub app_seconds: i64,
     /// Seconds of website usage across all slots.
     pub site_seconds: i64,
+    /// Inputs the slots counted, per kind.
+    pub inputs: InputLedger,
+    /// Slots with input features.
+    pub slots_with_input: usize,
 }
 
 /// The result of [`check`].
@@ -84,8 +90,11 @@ impl fmt::Display for TimelineCheck {
 ///   tracked time, and holds no more detail than `allowance`: no titles or paths unless some
 ///   policy allowed them, never a query or fragment, never a path or title from a private
 ///   window.
+/// - A slot's input features are consistent (counts, shares, intervals no more than inputs,
+///   statistics only from enough intervals, within their ranges), and the slots count no more
+///   inputs of any kind than were made.
 #[must_use]
-pub fn check(events: &[Value], untracked: &[Span], allowance: &UsageAllowance) -> TimelineCheck {
+pub fn check(events: &[Value], untracked: &[Span], allowance: &Allowance) -> TimelineCheck {
     let mut fold = Fold {
         allowance: Some(allowance.clone()),
         ..Fold::default()
@@ -114,7 +123,7 @@ struct Fold {
     slot_windows: HashSet<String>,
     /// Closed slots by ID: window, tracked seconds, and the usage batches seen for it.
     slots: HashMap<String, SlotRecord>,
-    allowance: Option<UsageAllowance>,
+    allowance: Option<Allowance>,
 }
 
 #[derive(Debug, Default)]
@@ -324,6 +333,7 @@ impl Fold {
         if !self.entries.contains_key(entry_id) {
             self.fail(format!("{label}: unknown entry {entry_id}"));
         }
+        self.input_features(label, &payload["input_features"]);
         self.summary.slots += 1;
         self.summary.slot_seconds += tracked;
         self.slots.insert(
@@ -383,9 +393,27 @@ impl Fold {
         records
     }
 
+    /// Checks a slot's `input_features` and adds its inputs to the summary.
+    fn input_features(&mut self, label: &str, features: &Value) {
+        if features.is_null() {
+            return;
+        }
+        let problems = input_problems(features);
+        for problem in problems {
+            self.fail(format!("{label}: input features {problem}"));
+        }
+        let count = |kind: &str| features["events"][kind].as_u64().unwrap_or(0);
+        let inputs = &mut self.summary.inputs;
+        inputs.key += count("key");
+        inputs.pointer += count("pointer");
+        inputs.click += count("click");
+        inputs.scroll += count("scroll");
+        self.summary.slots_with_input += 1;
+    }
+
     fn app_usage(&mut self, label: &str, payload: &Value) {
         let records = self.usage_batch(label, payload, "apps");
-        let allowance = self.allowance.clone().unwrap_or_default();
+        let allowance = self.allowance.clone().unwrap_or_default().usage;
         for record in records {
             self.summary.app_seconds += record["seconds"].as_i64().unwrap_or(0);
             let title = record["title"].as_str();
@@ -408,7 +436,7 @@ impl Fold {
 
     fn url_usage(&mut self, label: &str, payload: &Value) {
         let records = self.usage_batch(label, payload, "sites");
-        let allowance = self.allowance.clone().unwrap_or_default();
+        let allowance = self.allowance.clone().unwrap_or_default().usage;
         for record in records {
             self.summary.site_seconds += record["seconds"].as_i64().unwrap_or(0);
             let private = record["private_window"].as_bool().unwrap_or(false);
@@ -476,6 +504,18 @@ impl Fold {
                 self.summary.slot_seconds, self.summary.entry_ms
             ));
         }
+        let made = self.allowance.as_ref().map(|allowance| allowance.inputs);
+        let counted = self.summary.inputs;
+        if let Some(made) = made
+            && (counted.key > made.key
+                || counted.pointer > made.pointer
+                || counted.click > made.click
+                || counted.scroll > made.scroll)
+        {
+            self.violations.push(format!(
+                "slots count inputs {counted:?}, more than the {made:?} made"
+            ));
+        }
         TimelineCheck {
             violations: self.violations,
             summary: self.summary,
@@ -485,6 +525,73 @@ impl Fold {
     fn fail(&mut self, violation: String) {
         self.violations.push(violation);
     }
+}
+
+const INPUT_KINDS: [&str; 4] = ["key", "pointer", "click", "scroll"];
+
+/// What is wrong with an `input_features` object.
+fn input_problems(features: &Value) -> Vec<String> {
+    let mut problems = Vec::new();
+    if features["version"].as_u64() != Some(u64::from(FEATURES_VERSION)) {
+        problems.push(format!("have version {}", features["version"]));
+    }
+    let mut events = HashMap::new();
+    for kind in INPUT_KINDS {
+        match features["events"][kind].as_u64() {
+            Some(count) => {
+                events.insert(kind, count);
+            }
+            None => problems.push(format!("lack a count of {kind} inputs")),
+        }
+    }
+    let total: u64 = events.values().sum();
+    if total == 0 {
+        problems.push("count no input: they should be null".to_owned());
+    }
+    #[allow(
+        clippy::cast_precision_loss,
+        reason = "input counts in one slot stay far below 2^53"
+    )]
+    let share = events.get("key").copied().unwrap_or(0) as f64 / total.max(1) as f64;
+    // To three decimals, as the agent rounds: a share of exactly 0.4375 is 0.438.
+    let share = (share * 1_000.0).round() / 1_000.0;
+    let reported = features["keyboard_share"].as_f64().unwrap_or(-1.0);
+    if (reported - share).abs() > 1e-9 {
+        problems.push(format!("give a keyboard share of {reported}, not {share}"));
+    }
+    for kind in std::iter::once("any").chain(INPUT_KINDS) {
+        let intervals = &features["intervals"][kind];
+        let most = if kind == "any" {
+            total
+        } else {
+            events.get(kind).copied().unwrap_or(0)
+        };
+        if intervals.is_null() {
+            continue;
+        }
+        let count = intervals["count"].as_u64().unwrap_or(0);
+        if count == 0 || count > most {
+            problems.push(format!("hold {count} {kind} intervals for {most} inputs"));
+        }
+        let enough = count >= u64::from(MIN_INTERVALS);
+        let entropy = intervals["entropy_bits"].as_f64();
+        let cv = intervals["cv"].as_f64();
+        if !enough && (entropy.is_some() || cv.is_some()) {
+            problems.push(format!(
+                "give statistics from only {count} {kind} intervals"
+            ));
+        }
+        if enough && entropy.is_none() {
+            problems.push(format!("give no entropy for {count} {kind} intervals"));
+        }
+        if entropy.is_some_and(|bits| !(0.0..=4.0).contains(&bits)) {
+            problems.push(format!("give {kind} intervals {entropy:?} bits"));
+        }
+        if cv.is_some_and(|cv| cv < 0.0) {
+            problems.push(format!("give {kind} intervals a variation of {cv:?}"));
+        }
+    }
+    problems
 }
 
 fn point(event: &Value) -> Option<Point> {

@@ -10,11 +10,11 @@
 use std::time::Duration;
 
 use serde_json::{Value, json};
-use worklume_simulation::{Answer, Device, DeviceConfig, Focus, Span, Step, UsageAllowance, check};
+use worklume_simulation::{Allowance, Answer, Device, DeviceConfig, Focus, Span, Step, check};
 
 /// A short day with every event type the tracker sends while working: entries, idle time, a
-/// break, several slots, and app and website usage including a private window.
-fn clean_day() -> (Vec<Value>, Vec<Span>, UsageAllowance) {
+/// break, several slots, app and website usage including a private window, and input.
+fn clean_day() -> (Vec<Value>, Vec<Span>, Allowance) {
     let mut device = Device::new(DeviceConfig::default()).unwrap();
     for step in [
         Step::Start(1),
@@ -45,7 +45,7 @@ fn clean_day() -> (Vec<Value>, Vec<Span>, UsageAllowance) {
     (
         device.server().events().to_vec(),
         device.untracked().to_vec(),
-        device.usage_allowance().clone(),
+        device.allowance(),
     )
 }
 
@@ -64,12 +64,7 @@ fn position(events: &[Value], kind: &str) -> usize {
         .unwrap_or_else(|| panic!("the day has a {kind}"))
 }
 
-fn assert_reported(
-    events: &[Value],
-    untracked: &[Span],
-    allowance: &UsageAllowance,
-    expected: &str,
-) {
+fn assert_reported(events: &[Value], untracked: &[Span], allowance: &Allowance, expected: &str) {
     let result = check(events, untracked, allowance);
     assert!(
         result
@@ -91,6 +86,10 @@ fn a_clean_day_passes() {
     assert!(result.summary.slots >= 3);
     assert!(result.summary.usage_batches >= 4);
     assert!(result.summary.site_seconds >= 6 * 60 - 2);
+    assert!(result.summary.slots_with_input >= 3);
+    // All the work happened while tracking, so every input made is counted.
+    assert_eq!(result.summary.inputs, allowance.inputs);
+    assert!(allowance.inputs.key > 100 && allowance.inputs.pointer > 10);
 }
 
 #[test]
@@ -218,7 +217,7 @@ fn first_batch(events: &[Value], kind: &str) -> usize {
 #[test]
 fn a_title_kept_with_titles_off_is_reported() {
     let (events, untracked, mut allowance) = clean_day();
-    allowance.window_titles = false;
+    allowance.usage.window_titles = false;
     assert_reported(&events, &untracked, &allowance, "kept with titles off");
 }
 
@@ -226,7 +225,13 @@ fn a_title_kept_with_titles_off_is_reported() {
 fn a_private_window_title_is_reported() {
     let (mut events, untracked, allowance) = clean_day();
     let batch = first_batch(&events, "app_usage.batch");
-    let private_title = allowance.private_titles.iter().next().unwrap().clone();
+    let private_title = allowance
+        .usage
+        .private_titles
+        .iter()
+        .next()
+        .unwrap()
+        .clone();
     events[batch]["payload"]["apps"][0]["title"] = json!(private_title);
     assert_reported(&events, &untracked, &allowance, "of a private window kept");
 }
@@ -280,4 +285,46 @@ fn usage_without_its_slot_is_reported() {
     let batch = first_batch(&events, "app_usage.batch");
     events[batch]["payload"]["slot_id"] = json!("01920000-0000-7000-8000-00000000fffd");
     assert_reported(&events, &untracked, &allowance, "was not sent before it");
+}
+
+fn first_features(events: &[Value]) -> usize {
+    events
+        .iter()
+        .position(|event| {
+            event["type"] == "slot.closed" && !event["payload"]["input_features"].is_null()
+        })
+        .unwrap()
+}
+
+#[test]
+fn inconsistent_input_features_are_reported() {
+    let (events, untracked, allowance) = clean_day();
+    let slot = first_features(&events);
+    let damage: [(&str, Value, &str); 6] = [
+        ("/version", json!(2), "have version 2"),
+        ("/keyboard_share", json!(0.123), "keyboard share"),
+        ("/events/key", json!(0), "keyboard share"),
+        ("/intervals/any/count", json!(1_000_000), "intervals for"),
+        ("/intervals/key/count", json!(3), "statistics from only 3"),
+        ("/intervals/pointer/entropy_bits", json!(4.5), "bits"),
+    ];
+    for (pointer, value, expected) in damage {
+        let mut events = events.clone();
+        *events[slot]["payload"]["input_features"]
+            .pointer_mut(pointer)
+            .unwrap() = value;
+        assert_reported(&events, &untracked, &allowance, expected);
+    }
+    let mut events = events;
+    for kind in ["key", "pointer", "click", "scroll"] {
+        events[slot]["payload"]["input_features"]["events"][kind] = json!(0);
+    }
+    assert_reported(&events, &untracked, &allowance, "count no input");
+}
+
+#[test]
+fn more_inputs_than_were_made_are_reported() {
+    let (events, untracked, mut allowance) = clean_day();
+    allowance.inputs.click -= 1;
+    assert_reported(&events, &untracked, &allowance, "more than the");
 }

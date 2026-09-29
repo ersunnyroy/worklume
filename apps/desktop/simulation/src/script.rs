@@ -39,6 +39,11 @@ pub enum Step {
     Work(Duration),
     /// The member is away; the device stays awake.
     Away(Duration),
+    /// The member is away and a jiggler moves the pointer `every` so often.
+    Jiggle {
+        duration: Duration,
+        every: Duration,
+    },
     /// The device sleeps.
     Sleep(Duration),
     /// Someone moves the wall clock by this many seconds.
@@ -73,6 +78,12 @@ impl fmt::Display for Step {
             Self::Resume => f.write_str("resume"),
             Self::Work(duration) => write!(f, "work {}", seconds(*duration)),
             Self::Away(duration) => write!(f, "away {}", seconds(*duration)),
+            Self::Jiggle { duration, every } => write!(
+                f,
+                "away {}, a jiggler moving the mouse every {}",
+                seconds(*duration),
+                seconds(*every)
+            ),
             Self::Sleep(duration) => write!(f, "sleep {}", seconds(*duration)),
             Self::ShiftClock(delta) => write!(f, "move the clock by {delta} s"),
             Self::Reboot(downtime) => write!(f, "reboot, off {}", seconds(*downtime)),
@@ -125,6 +136,7 @@ impl Device {
             Step::Resume => drop(self.resume()?),
             Step::Work(duration) => self.work(duration)?,
             Step::Away(duration) => self.away(duration)?,
+            Step::Jiggle { duration, every } => self.jiggle(duration, every)?,
             Step::Sleep(duration) => self.sleep(duration),
             Step::ShiftClock(delta) => self.shift_clock(delta),
             Step::Reboot(downtime) => self.reboot(downtime)?,
@@ -211,7 +223,7 @@ fn report(steps: &[Step], device: &Device) -> Result<Report, SimError> {
     let timeline = check(
         device.server().events(),
         device.untracked(),
-        device.usage_allowance(),
+        &device.allowance(),
     );
     let mut problems: Vec<String> = device.server().problems().to_vec();
     let left = device.outbox_len()?;
