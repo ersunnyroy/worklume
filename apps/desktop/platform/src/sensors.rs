@@ -1,10 +1,11 @@
 //! The sensors this session offers: each an OS adapter where one exists and starts, otherwise
 //! [`Unsupported`], so a missing capability is reported rather than guessed.
 //!
-//! - Linux X11: idle time and input events (E12-S03); the session lock from logind or the
-//!   screen saver (E12-S03, shared with Wayland).
-//! - Everything else waits for its story: the active window and browser addresses (E12-S04,
-//!   E10-S04, E11-S04), and macOS and Windows input and locks (E10-S03, E11-S03).
+//! - Linux X11: idle time and input events (E12-S03), and the window in front (E12-S04); the
+//!   session lock from logind or the screen saver (E12-S03, shared with Wayland).
+//! - Everything else waits for its story: browser addresses (E12-S04 with E35, E10-S04,
+//!   E11-S04), the macOS and Windows front app (E10-S04, E11-S04), and their input and locks
+//!   (E10-S03, E11-S03).
 
 use std::sync::Arc;
 
@@ -42,7 +43,7 @@ impl DeviceSensors {
 
     #[cfg(target_os = "linux")]
     fn start_os(&mut self, clock: &Arc<dyn Clock>) {
-        use crate::linux::{LinuxSessionLock, X11Idle, X11Input};
+        use crate::linux::{LinuxSessionLock, X11Idle, X11Input, X11Window};
         use crate::{LinuxSession, PlatformInfo};
 
         self.lock = Arc::new(LinuxSessionLock::new());
@@ -52,6 +53,10 @@ impl DeviceSensors {
         match X11Idle::connect() {
             Ok(idle) => self.idle = Arc::new(idle),
             Err(error) => self.problems.push(format!("idle time: {error}")),
+        }
+        match X11Window::connect() {
+            Ok(window) => self.window = Arc::new(window),
+            Err(error) => self.problems.push(format!("the window in front: {error}")),
         }
         match X11Input::start(Arc::clone(clock)) {
             Ok(input) => {

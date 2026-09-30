@@ -11,17 +11,23 @@ use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
 use std::thread::sleep;
 use std::time::{Duration, Instant};
 
-use worklume_platform::linux::{X11Idle, X11Input};
+use std::path::PathBuf;
+
+use worklume_platform::linux::{X11Idle, X11Input, X11Window};
 use worklume_platform::{
-    Clock, DeviceSensors, IdleSource, InputActivity, InputEvent, InputKind, OsClock,
+    ActiveWindow, Clock, DeviceSensors, ForegroundApp, IdleSource, InputActivity, InputEvent,
+    InputKind, OsClock, SensorError,
 };
+use x11rb::COPY_DEPTH_FROM_PARENT;
 use x11rb::connection::Connection;
 use x11rb::protocol::xproto::{
-    BUTTON_PRESS_EVENT, BUTTON_RELEASE_EVENT, ConnectionExt as _, GrabMode, KEY_PRESS_EVENT,
-    KEY_RELEASE_EVENT, MOTION_NOTIFY_EVENT, Window,
+    AtomEnum, BUTTON_PRESS_EVENT, BUTTON_RELEASE_EVENT, ConnectionExt as _, CreateWindowAux,
+    GrabMode, KEY_PRESS_EVENT, KEY_RELEASE_EVENT, MOTION_NOTIFY_EVENT, PropMode, Window,
+    WindowClass,
 };
 use x11rb::protocol::xtest::ConnectionExt as _;
 use x11rb::rust_connection::RustConnection;
+use x11rb::wrapper::ConnectionExt as _;
 
 /// Tests share one X server, and each other's input would disturb them.
 static ONE_AT_A_TIME: Mutex<()> = Mutex::new(());
@@ -70,6 +76,98 @@ impl Hands {
     /// A relative move: absolute XTEST motion produces no raw motion.
     fn nudge(&self) {
         self.fake(MOTION_NOTIFY_EVENT, 1, 3, 2);
+    }
+
+    fn atom(&self, name: &str) -> u32 {
+        self.conn
+            .intern_atom(false, name.as_bytes())
+            .expect("request")
+            .reply()
+            .expect("reply")
+            .atom
+    }
+
+    /// A window with `WM_CLASS` (instance and class), as an application maps one.
+    fn window(&self, class: Option<(&str, &str)>) -> Window {
+        let window = self.conn.generate_id().expect("an ID");
+        self.conn
+            .create_window(
+                COPY_DEPTH_FROM_PARENT,
+                window,
+                self.root,
+                0,
+                0,
+                10,
+                10,
+                0,
+                WindowClass::INPUT_OUTPUT,
+                0,
+                &CreateWindowAux::new(),
+            )
+            .expect("request");
+        if let Some((instance, class)) = class {
+            let value = format!("{instance}\0{class}\0");
+            self.set(
+                window,
+                AtomEnum::WM_CLASS.into(),
+                AtomEnum::STRING.into(),
+                value.as_bytes(),
+            );
+        }
+        window
+    }
+
+    fn set(&self, window: Window, property: u32, kind: u32, value: &[u8]) {
+        self.conn
+            .change_property8(PropMode::REPLACE, window, property, kind, value)
+            .expect("request");
+    }
+
+    fn set_utf8(&self, window: Window, property: &str, value: &str) {
+        let (property, kind) = (self.atom(property), self.atom("UTF8_STRING"));
+        self.set(window, property, kind, value.as_bytes());
+    }
+
+    /// Acts as the window manager: puts `window` in front, 0 for nothing.
+    fn activate(&self, window: Window) {
+        let active = self.atom("_NET_ACTIVE_WINDOW");
+        self.conn
+            .change_property32(
+                PropMode::REPLACE,
+                self.root,
+                active,
+                AtomEnum::WINDOW,
+                &[window],
+            )
+            .expect("request");
+        self.sync();
+    }
+
+    /// Acts as a window manager without EWMH.
+    fn no_window_manager(&self) {
+        for property in ["_NET_ACTIVE_WINDOW", "_NET_SUPPORTED"] {
+            let atom = self.atom(property);
+            self.conn.delete_property(self.root, atom).expect("request");
+        }
+        self.sync();
+    }
+
+    /// Acts as an EWMH window manager that hasn't activated a window yet.
+    fn fresh_window_manager(&self) {
+        let (active, supported) = (self.atom("_NET_ACTIVE_WINDOW"), self.atom("_NET_SUPPORTED"));
+        self.conn
+            .delete_property(self.root, active)
+            .expect("request");
+        self.conn
+            .change_property32(
+                PropMode::REPLACE,
+                self.root,
+                supported,
+                AtomEnum::ATOM,
+                &[active],
+            )
+            .expect("request");
+        self.sync();
     }
 
     /// Waits until the server has handled everything sent so far.
@@ -210,6 +308,8 @@ fn an_x11_session_gets_the_x11_adapters() {
     let sensors = DeviceSensors::start(&clock);
     assert!(sensors.problems.is_empty(), "{:?}", sensors.problems);
     assert!(sensors.input_hooks);
+    hands.activate(hands.window(Some(("probe", "ProbeApp"))));
+    assert!(sensors.window.foreground(false).is_ok());
     assert!(sensors.idle.idle_for().is_ok());
     drop(sensors.input.drain());
     hands.key();
@@ -217,4 +317,144 @@ fn an_x11_session_gets_the_x11_adapters() {
     sleep(Duration::from_millis(200));
     let events = sensors.input.drain().expect("the reader works");
     assert_eq!(count(&events, InputKind::Key), 1);
+}
+
+/// Applications folders holding `entries`, in a fresh temporary folder.
+fn applications(test: &str, entries: &[(&str, &str)]) -> Vec<PathBuf> {
+    let dir = std::env::temp_dir().join(format!("worklume-x11-{test}-{}", std::process::id()));
+    drop(std::fs::remove_dir_all(&dir));
+    std::fs::create_dir_all(&dir).expect("a folder");
+    for (name, text) in entries {
+        std::fs::write(dir.join(name), text).expect("an entry");
+    }
+    vec![dir]
+}
+
+const PROBE: &str =
+    "[Desktop Entry]\nType=Application\nName=Probe App\nExec=probe\nStartupWMClass=ProbeApp\n";
+
+fn front(reader: &X11Window, with_title: bool) -> ForegroundApp {
+    reader
+        .foreground(with_title)
+        .expect("a reading")
+        .expect("something in front")
+}
+
+#[test]
+#[ignore = "needs an X server: run under xvfb-run with --ignored"]
+fn names_the_app_in_front_and_reads_its_title_only_when_asked() {
+    let _one = serial();
+    let hands = Hands::new();
+    let reader =
+        X11Window::connect_with(applications("names", &[("worklume-probe.desktop", PROBE)]))
+            .expect("an X server");
+    // Chromium puts its profile folder in the instance part; none of it may come out.
+    let window = hands.window(Some(("probe (/home/member/secret-profile)", "ProbeApp")));
+    hands.set_utf8(window, "_NET_WM_NAME", "Q3 report — draft");
+    hands.activate(window);
+
+    let app = front(&reader, false);
+    assert_eq!(app.identifier, "worklume-probe");
+    assert_eq!(app.name, "Probe App");
+    assert_eq!(app.title, None);
+    let titled = front(&reader, true);
+    assert_eq!(titled.title.as_deref(), Some("Q3 report — draft"));
+    assert!(!format!("{app:?}{titled:?}").contains("secret-profile"));
+}
+
+#[test]
+#[ignore = "needs an X server: run under xvfb-run with --ignored"]
+fn without_an_entry_the_class_names_the_app() {
+    let _one = serial();
+    let hands = Hands::new();
+    let reader = X11Window::connect_with(applications("class", &[])).expect("an X server");
+    let window = hands.window(Some(("unlisted", "Unlisted")));
+    // `WM_NAME` as `STRING` is Latin-1.
+    hands.set(
+        window,
+        AtomEnum::WM_NAME.into(),
+        AtomEnum::STRING.into(),
+        b"Caf\xe9",
+    );
+    hands.activate(window);
+    let app = front(&reader, true);
+    assert_eq!(app.identifier, "unlisted");
+    assert_eq!(app.name, "Unlisted");
+    assert_eq!(app.title.as_deref(), Some("Café"));
+}
+
+#[test]
+#[ignore = "needs an X server: run under xvfb-run with --ignored"]
+fn the_toolkit_app_id_and_the_executable_name_apps() {
+    let _one = serial();
+    let hands = Hands::new();
+    let exe = std::env::current_exe().expect("this test's executable");
+    let exec = format!(
+        "[Desktop Entry]\nType=Application\nName=Runner\nExec=\"{}\" --flag\n",
+        exe.display()
+    );
+    let reader = X11Window::connect_with(applications(
+        "ids",
+        &[
+            ("worklume-probe.desktop", PROBE),
+            (
+                "org.example.Notes.desktop",
+                "[Desktop Entry]\nType=Application\nName=Notes\nExec=notes\n",
+            ),
+            ("runner.desktop", &exec),
+        ],
+    ))
+    .expect("an X server");
+
+    // The toolkit's ID beats the class another entry claims.
+    let notes = hands.window(Some(("notes", "ProbeApp")));
+    hands.set_utf8(notes, "_GTK_APPLICATION_ID", "org.example.Notes");
+    hands.activate(notes);
+    assert_eq!(front(&reader, false).identifier, "org.example.Notes");
+
+    // No class: the executable, found through X-Resource, names the app. This test's own
+    // process made the window.
+    let bare = hands.window(None);
+    hands.activate(bare);
+    let app = front(&reader, false);
+    assert_eq!(
+        (app.identifier.as_str(), app.name.as_str()),
+        ("runner", "Runner")
+    );
+}
+
+#[test]
+#[ignore = "needs an X server: run under xvfb-run with --ignored"]
+fn a_window_that_changes_class_is_named_again() {
+    // The server reuses closed windows' IDs, so the app is never taken from the cache alone.
+    let _one = serial();
+    let hands = Hands::new();
+    let reader =
+        X11Window::connect_with(applications("reuse", &[("worklume-probe.desktop", PROBE)]))
+            .expect("an X server");
+    let window = hands.window(Some(("probe", "ProbeApp")));
+    hands.activate(window);
+    assert_eq!(front(&reader, false).identifier, "worklume-probe");
+    hands.set(
+        window,
+        AtomEnum::WM_CLASS.into(),
+        AtomEnum::STRING.into(),
+        b"other\0Other\0",
+    );
+    hands.sync();
+    assert_eq!(front(&reader, false).identifier, "other");
+}
+
+#[test]
+#[ignore = "needs an X server: run under xvfb-run with --ignored"]
+fn nothing_in_front_differs_from_no_window_manager() {
+    let _one = serial();
+    let hands = Hands::new();
+    let reader = X11Window::connect_with(applications("empty", &[])).expect("an X server");
+    hands.activate(0);
+    assert_eq!(reader.foreground(true), Ok(None));
+    hands.fresh_window_manager();
+    assert_eq!(reader.foreground(true), Ok(None));
+    hands.no_window_manager();
+    assert_eq!(reader.foreground(true), Err(SensorError::Unsupported));
 }

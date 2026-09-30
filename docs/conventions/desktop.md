@@ -576,7 +576,8 @@ of 11 caught.
 
 ## Linux sensors
 
-E12-S03, after the spike in `docs/spikes/E12-S01-x11.md`. `worklume-platform::linux`:
+E12-S03 and E12-S04, after the spike in `docs/spikes/E12-S01-x11.md`.
+`worklume-platform::linux`:
 
 - **`X11Idle`**: the MIT-SCREEN-SAVER extension's `ms_since_user_input`, under 0.3 ms a
   reading.
@@ -595,13 +596,37 @@ E12-S03, after the spike in `docs/spikes/E12-S01-x11.md`. `worklume-platform::li
     dropping the reader stops it promptly. A reader whose connection fails reports it on the
     next drain, and activity falls back to the idle source.
   - Absolute XTEST motion, which some remote-desktop servers inject, produces no raw motion.
+- **`X11Window`** (E12-S04): the window in front, for app usage (E09-S12).
+  - `_NET_ACTIVE_WINDOW` on the root, which EWMH window managers set. A 0, or no value yet from
+    a window manager whose `_NET_SUPPORTED` lists it (Openbox sets it only once a window is
+    first activated), means nothing is in front. A window manager that doesn't list it doesn't
+    follow EWMH, and the reading is `Unsupported`.
+  - The app is its desktop-file ID and `Name`, from the XDG entries (`linux::desktop`):
+    `$XDG_DATA_HOME`, then `$XDG_DATA_DIRS`, then the Flatpak and Snap exports, the earlier
+    folder winning and a `Hidden` entry deleting the app. A window matches, strongest first, by
+    the toolkit's app ID (`_GTK_APPLICATION_ID`, `_KDE_NET_WM_DESKTOP_FILE`), by
+    `StartupWMClass` against its class or instance, by an ID equal to its class or instance in
+    lower case, or by the one entry whose `Exec` runs its executable. The executable comes from
+    X-Resource, the server's record of the client, not the client-set `_NET_WM_PID`.
+  - Without an entry, the class names the app (`chromium-browser`), and without a class the
+    executable. **The instance is used only to match**: Chromium puts its profile folder there.
+  - Each window's app is cached with the `WM_CLASS` it had, and looked up again when that
+    changes, because the server reuses closed windows' IDs. When nothing matches, the entries
+    are read again at most every five minutes, for apps installed since.
+  - The title (`_NET_WM_NAME`, else `WM_NAME`, `STRING` read as Latin-1) is read only when the
+    policy keeps titles.
+  - A reading takes 0.15–0.6 ms for a new window and about 35–80 µs cached. Checked on Xvfb with
+    Openbox against a real xterm (`debian-xterm`, "XTerm", from its installed entry) and
+    Chromium.
+  - Browser addresses on X11 wait on the decision about the browser extension (E35); see the
+    spike.
 - **`LinuxSessionLock`** (X11 and Wayland alike): logind's `LockedHint` on
   `/org/freedesktop/login1/session/auto`, the caller's own session or the member's graphical
   one, falling back to `org.freedesktop.ScreenSaver` or `org.gnome.ScreenSaver` `GetActive` on
   the session bus. One D-Bus call per reading, with a 250 ms timeout; a failed call reconnects
   on the next reading. No service at all reads as `Unsupported`.
 - **`DeviceSensors::start`** picks the adapters for this session: on Linux the lock always, and
-  on X11 idle time and input too. What fails to start is logged once per attempt and reads as
+  on X11 idle time, input and the window in front too. What fails to start is logged once per attempt and reads as
   `Unsupported`, and the agent tracks without it.
 
 **Decision: the `dbus` crate, not `zbus`.** The architecture names `zbus` for the Linux
@@ -612,11 +637,16 @@ remains the choice if the Wayland work (E13) needs async D-Bus or portals.
 **Tested.**
 
 - Unit tests classify raw events: repeats, buttons, the wheel, smooth scrolling and valuator
-  masks.
+  masks. Others read desktop entries (only the `[Desktop Entry]` group, quoted `Exec` paths,
+  shared launchers) and match windows in order, with folder precedence and hidden entries.
 - `platform/tests/x11.rs` runs against a real X server, with input faked through XTEST: idle
   time, every kind of input stamped with the agent's clock, input still arriving while
   another client holds the keyboard (why locked time drops input), the reader stopping when
-  dropped, and `DeviceSensors` picking the X11 adapters. The tests keep one connection open
+  dropped, and `DeviceSensors` picking the X11 adapters. The window tests act as the window
+  manager, creating windows and setting `_NET_ACTIVE_WINDOW` themselves: the app from its
+  entry, the toolkit's ID and the executable, the class without an entry, a Latin-1 title, a
+  title only when asked, a window whose class changes, nothing in front, and no EWMH. A path in
+  the instance never comes out. The tests keep one connection open
   throughout, because Xvfb resets when its last client leaves and refuses connections while it
   does.
 - The lock is tested against stand-in logind and screen saver services on a private session

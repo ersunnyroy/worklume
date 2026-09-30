@@ -33,6 +33,10 @@ use x11rb::rust_connection::RustConnection;
 
 use crate::{Clock, IdleError, IdleSource, InputActivity, InputEvent, InputKind, SensorError};
 
+mod window;
+
+pub use window::X11Window;
+
 /// Events kept until the agent drains them: ten seconds of a mouse reporting at 2 kHz. Beyond
 /// it the oldest are dropped.
 pub(crate) const MAX_BUFFERED: usize = 20_000;
