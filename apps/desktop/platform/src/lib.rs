@@ -13,6 +13,7 @@
 //! come with their per-OS stories, and until then [`Unsupported`] stands in for them.
 //! [`DeviceSensors`] picks what this session offers.
 
+mod autostart;
 mod clock;
 mod detect;
 #[cfg(feature = "fake")]
@@ -27,6 +28,7 @@ mod sensors;
 mod session;
 mod unsupported;
 
+pub use autostart::{Autostart, AutostartError, LAUNCHED_AT_LOGIN};
 pub use clock::{Clock, ClockError, ClockReading, OsClock};
 pub use detect::{LinuxSession, OperatingSystem, PlatformInfo, linux_session_from_env};
 pub use foreground::{ActiveWindow, BrowserTab, BrowserUrl, ForegroundApp, SensorError};

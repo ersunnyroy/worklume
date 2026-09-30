@@ -866,7 +866,13 @@ prove the behaviour. A second test runs the same scenario without the handler an
 app to exit, so the first test cannot pass by accident.
 
 The mock runtime cannot report visibility, so "Open Worklume" restoring the window is verified
-manually and by the per-OS tray stories (E10-S07, E11-S05, E12-S05).
+by the per-OS tray stories: on Linux by `tests/tray_linux.rs` (E12-S05, see "Linux tray and
+autostart"); on macOS and Windows by E10-S07 and E11-S05.
+
+A second launch shows the running agent's window, **unless it is a launch at login**
+(`--autostart`, `worklume_platform::LAUNCHED_AT_LOGIN`, which every OS's autostart passes):
+that finds nothing to show, so logging in never pops the window up. The watchdog passes the
+argument through to the agent.
 
 ## Webview security
 
@@ -883,6 +889,65 @@ manually and by the per-OS tray stories (E10-S07, E11-S05, E12-S05).
 Tauri adds `libayatana-appindicator3-1`, `libwebkit2gtk-4.1-0` and `libgtk-3-0` to the `.deb`
 dependencies automatically when the tray is enabled, which satisfies risk R5's "AppIndicator
 dependency declared". CI builds on Ubuntu 22.04 so the packages also run on newer releases.
+
+What the `.deb` installs (checked on a build, E12-S05):
+
+- `/usr/bin/worklume-desktop`;
+- `/usr/share/applications/Worklume.desktop`, with `StartupWMClass=worklume-desktop`. The
+  window's class comes from the program name, so the program name must not change, or docks
+  lose the window's icon;
+- icons under `/usr/share/icons/hicolor`, named `worklume-desktop`;
+- `/etc/xdg/autostart/com.worklume.agent.desktop` (E12-S05; the `.rpm` too), from
+  `src-tauri/linux/com.worklume.agent.autostart.desktop`: `Exec=/usr/bin/worklume-desktop
+--autostart`.
+
+The package metadata (maintainer, long description) and the apt repository are E12-S06's.
+
+## Linux tray and autostart
+
+E12-S05. **The tray** is Tauri's: a `StatusNotifierItem` through `libayatana-appindicator`,
+which stock Ubuntu's AppIndicator extension draws. Other GNOME desktops need such an
+extension; KDE, Xfce and others host `StatusNotifierItem` themselves.
+
+- The tray library writes the icon to a file. Without `XDG_RUNTIME_DIR` it falls back to a
+  shared `/tmp/tray-icon`, which another user may own or hold a planted link in. The agent
+  gives it `$XDG_RUNTIME_DIR/com.worklume.agent/tray`, or the cache folder without one, made
+  `0700`.
+- The item's `Title` is the program name, `worklume-desktop`: changing it through GLib's
+  program name would also change the window's class (see "Linux packaging").
+- The tray menu is English only, like the window, until a second language arrives; both will
+  be localised together.
+
+**Autostart** (`worklume_platform::Autostart`, Linux adapter `linux::XdgAutostart`):
+
+- The packages install the system entry, so the agent starts at login for every member of the
+  machine.
+- `set_enabled(false)` writes the member's own entry with `Hidden=true`. `set_enabled(true)`
+  removes that override, so the package's entry, which updates keep current, applies again.
+- Without an enabled system entry (another way of installing, or an administrator who turned
+  it off), `set_enabled(true)` writes a member's entry running this executable, or the
+  `AppImage` it came from. The path is quoted and escaped as desktop entries require.
+- `enabled()` honours `Hidden=true` and GNOME's `X-GNOME-Autostart-enabled=false` (what GNOME's
+  Startup Applications writes), in the `[Desktop Entry]` group only.
+- Entries are written aside and renamed, so a login never meets half an entry.
+- Nothing calls it yet: the organization's `auto-start` policy (E09-S06) and the member's
+  setting (E09-S09 part 2) will. macOS and Windows adapters come with E10-S07 and E11-S05.
+
+**Tested.**
+
+- Unit tests cover the entry logic with temporary folders.
+- `src-tauri/tests/tray_linux.rs` runs the real app against a stand-in `StatusNotifierWatcher`
+  on a private D-Bus session. It checks that the app:
+  - registers an active item, with its icon in the private folder and the two menu items;
+  - shows no window when launched at login, even at a second such launch;
+  - opens the window from "Open Worklume" and exits cleanly from "Quit Worklume", clicked
+    through `com.canonical.dbusmenu` as a panel would.
+- The `Desktop` workflow runs it on Ubuntu under `xvfb-run -a dbus-run-session`.
+- On a built `.deb`, installed in the workspace, launching the autostart entry with
+  `gio launch` (as a session does at login) started the supervisor and the agent with
+  `--autostart`, registered the tray item and showed no window.
+- Not covered: GNOME Shell itself and its AppIndicator extension, which is the release test
+  matrix.
 
 ## CI cost
 
