@@ -154,14 +154,18 @@ export type ProjectDto = {
 export type QuestionDto = 
 /**
  *  Idle time awaits an answer: keep, discard, reassign or stop. When `paused`, the device
- *  slept meanwhile and any answer but stop also resumes the timer.
+ *  slept or the session was locked meanwhile, and any answer but stop also resumes the
+ *  timer.
  */
 { kind: "idle"; 
 /**  Where inactivity began, in milliseconds since the Unix epoch. */
 since_ms: number | null; 
 /**  How long ago that was, sleep included; unknown after a reboot. */
 idle_seconds: number | null; paused: boolean } | 
-/**  The device slept longer than the idle timeout: resume, or stop. */
+/**
+ *  The device slept, or the session was locked, longer than the idle timeout: resume, or
+ *  stop.
+ */
 { kind: "resume" };
 
 export type TimerStatusDto = { kind: "stopped" } | { kind: "running" } | 

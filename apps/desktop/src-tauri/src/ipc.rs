@@ -174,7 +174,8 @@ pub struct WorkDto {
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum QuestionDto {
     /// Idle time awaits an answer: keep, discard, reassign or stop. When `paused`, the device
-    /// slept meanwhile and any answer but stop also resumes the timer.
+    /// slept or the session was locked meanwhile, and any answer but stop also resumes the
+    /// timer.
     Idle {
         /// Where inactivity began, in milliseconds since the Unix epoch.
         since_ms: f64,
@@ -182,7 +183,8 @@ pub enum QuestionDto {
         idle_seconds: Option<u32>,
         paused: bool,
     },
-    /// The device slept longer than the idle timeout: resume, or stop.
+    /// The device slept, or the session was locked, longer than the idle timeout: resume, or
+    /// stop.
     Resume,
 }
 

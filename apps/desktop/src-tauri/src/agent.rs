@@ -16,9 +16,9 @@ use worklume_core::catalog::{Catalog, CatalogError};
 use worklume_core::timekeeper::{
     IdlePolicy, KeepIdle, Outcome, Sensors, Timekeeper, TimekeeperError,
 };
-use worklume_core::tracker::{Activity, IdleResolution, InputMethod, TrackerConfig, TrackerError};
+use worklume_core::tracker::{IdleResolution, InputMethod, TrackerConfig, TrackerError};
 use worklume_core::view::{TimerView, timer_view};
-use worklume_platform::{Clock, OsClock, OsSecretStore, SecretStore, Unsupported};
+use worklume_platform::{Clock, DeviceSensors, OsClock, OsSecretStore, SecretStore};
 use worklume_storage::{StorageError, Store};
 
 use crate::diagnostics::APP_IDENTIFIER;
@@ -141,9 +141,9 @@ impl Agent {
         }
     }
 
-    /// Opens the store in `dir` and the timekeeper on `sensors`. The idle policy, the app and
-    /// URL policy and the catalog stay empty until the organization's configuration arrives
-    /// (E09-S06).
+    /// Opens the store in `dir` and the timekeeper on `sensors`, whose input is measured as
+    /// `input_method` says. The idle policy, the app and URL policy and the catalog stay empty
+    /// until the organization's configuration arrives (E09-S06).
     ///
     /// # Errors
     ///
@@ -153,8 +153,9 @@ impl Agent {
         dir: &Path,
         secrets: &dyn SecretStore,
         sensors: Sensors,
+        input_method: InputMethod,
     ) -> Result<(), Unavailable> {
-        let result = open_keeper(dir, secrets, sensors);
+        let result = open_keeper(dir, secrets, sensors, input_method);
         self.settle(result.map(|keeper| {
             Inner::Ready(Box::new(Running {
                 keeper,
@@ -164,15 +165,18 @@ impl Agent {
         }))
     }
 
-    /// Opens the store in the agent's data folder, on this device's clock and credential store.
-    /// Sensors the OS adapters don't provide yet (E10–E13) read as unsupported.
+    /// Opens the store in the agent's data folder, on this device's clock, credential store and
+    /// sensors (`worklume_platform::DeviceSensors`). Sensors without an adapter on this OS yet
+    /// read as unsupported.
     ///
     /// # Errors
     ///
     /// As [`Agent::open`].
     pub fn open_on_this_device(&self) -> Result<(), Unavailable> {
         match this_device() {
-            Ok((dir, secrets, sensors)) => self.open(&dir, &secrets, sensors),
+            Ok((dir, secrets, sensors, input_method)) => {
+                self.open(&dir, &secrets, sensors, input_method)
+            }
             Err(failure) => self.settle(Err(failure)),
         }
     }
@@ -268,7 +272,7 @@ impl Agent {
                 new_question: false,
             };
         };
-        let new_question = match running.keeper.tick(Activity::NONE) {
+        let new_question = match running.keeper.tick_measured() {
             Ok(outcome) => {
                 if running.failing {
                     info!("the timer is being recorded again");
@@ -400,8 +404,8 @@ impl Running {
     }
 }
 
-/// This device's store folder, credential store and sensors.
-fn this_device() -> Result<(PathBuf, OsSecretStore, Sensors), OpenFailure> {
+/// This device's store folder, credential store and sensors, and how its input is measured.
+fn this_device() -> Result<(PathBuf, OsSecretStore, Sensors, InputMethod), OpenFailure> {
     let dir = store_dir().ok_or_else(|| {
         OpenFailure::new(
             Unavailable::NoDataFolder,
@@ -420,20 +424,31 @@ fn this_device() -> Result<(PathBuf, OsSecretStore, Sensors), OpenFailure> {
         OsClock::new()
             .map_err(|error| OpenFailure::new(Unavailable::Clock, "reading the clock", error))?,
     );
+    let device = DeviceSensors::start(&clock);
+    for problem in &device.problems {
+        warn!(%problem, "a sensor couldn't start; the agent tracks without it");
+    }
+    let input_method = if device.input_hooks {
+        InputMethod::Hooks
+    } else {
+        InputMethod::IdlePoll
+    };
     let sensors = Sensors {
         clock,
-        idle: Arc::new(Unsupported),
-        window: Arc::new(Unsupported),
-        browser: Arc::new(Unsupported),
-        input: Arc::new(Unsupported),
+        idle: device.idle,
+        window: device.window,
+        browser: device.browser,
+        input: device.input,
+        lock: device.lock,
     };
-    Ok((dir, secrets, sensors))
+    Ok((dir, secrets, sensors, input_method))
 }
 
 fn open_keeper(
     dir: &Path,
     secrets: &dyn SecretStore,
     sensors: Sensors,
+    input_method: InputMethod,
 ) -> Result<Timekeeper, OpenFailure> {
     let (store, report) = Store::open(dir, secrets).map_err(|error| {
         let reason = match error {
@@ -452,8 +467,7 @@ fn open_keeper(
             "the local store could not be read and was set aside; a new one started"
         );
     }
-    // Until the per-OS adapters report how input is measured (E10–E13), no input is.
-    let config = TrackerConfig::new(InputMethod::IdlePoll);
+    let config = TrackerConfig::new(input_method);
     // Idle detection waits for the organization's policy (E09-S06).
     let policy = IdlePolicy {
         timeout: None,

@@ -14,10 +14,11 @@ use tempfile::TempDir;
 use uuid::Uuid;
 use worklume_core::catalog::{Catalog, Project};
 use worklume_core::timekeeper::Sensors;
+use worklume_core::tracker::InputMethod;
 use worklume_desktop::MAIN_WINDOW;
 use worklume_desktop::agent::Agent;
 use worklume_platform::fake::{
-    FakeBrowser, FakeClock, FakeIdle, FakeInput, FakeWindow, MemorySecretStore,
+    FakeBrowser, FakeClock, FakeIdle, FakeInput, FakeLock, FakeWindow, MemorySecretStore,
 };
 
 const PROJECT: Uuid = Uuid::from_u128(0x0192_0000_0000_7000_8000_0000_0000_0001);
@@ -37,7 +38,9 @@ fn app(dir: &TempDir) -> App<MockRuntime> {
                 window: Arc::new(FakeWindow::default()),
                 browser: Arc::new(FakeBrowser::default()),
                 input: Arc::new(FakeInput::default()),
+                lock: Arc::new(FakeLock::default()),
             },
+            InputMethod::Hooks,
         )
         .expect("the agent opens");
     agent

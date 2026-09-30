@@ -278,3 +278,56 @@ fn a_jiggler_keeps_the_timer_running_but_not_the_rhythm_of_a_person() {
         }
     }
 }
+
+#[test]
+fn a_locked_session_is_never_tracked_and_its_typing_never_counts() {
+    let mut device = Device::new(DeviceConfig::default()).unwrap();
+    for step in [
+        Step::Start(1),
+        Step::Work(mins(10)),
+        // Past the five-minute timeout: the member is asked whether to resume.
+        Step::Lock(mins(30)),
+        Step::Resume,
+        Step::Work(mins(10)),
+        // A short lock: the timer resumes by itself. Input on the tick that sees the unlock is
+        // dropped with the password, so the member reaches for the keyboard a moment later.
+        Step::Lock(mins(2)),
+        Step::Away(Duration::from_secs(2)),
+        Step::Work(mins(5)),
+        Step::Stop,
+    ] {
+        device.perform(step).unwrap();
+    }
+    device.wind_down().unwrap();
+    let result = check(
+        device.server().events(),
+        device.untracked(),
+        &device.allowance(),
+    );
+    assert!(result.violations.is_empty(), "{result}");
+    // Every input made at the keyboard while tracking counts, and none from the lock screen,
+    // the password included: those are left out of the ledger.
+    assert_eq!(result.summary.inputs, device.inputs());
+    // 25 minutes of work, and the second after the tick that saw the unlock.
+    assert_eq!(result.summary.slot_seconds, 25 * 60 + 1);
+    assert_eq!(result.summary.idle_periods, 0);
+    let reasons: Vec<&Value> = device
+        .server()
+        .events()
+        .iter()
+        .filter(|event| event["type"] == "timer.stopped")
+        .map(|event| &event["payload"]["reason"])
+        .collect();
+    assert_eq!(reasons, ["session_locked", "session_locked", "user"]);
+}
+
+#[test]
+fn a_person_at_the_keyboard_is_active_nearly_all_the_time() {
+    let report = play(
+        &[Step::Start(1), Step::Work(mins(20)), Step::Stop],
+        DeviceConfig::default(),
+    );
+    // The scripted hands leave about one second in 16 without input.
+    let active = report.timeline.summary.active_seconds;
+    assert!((20 * 60 * 9 / 10..=20 * 60).contains(&active), "{report}");
+}

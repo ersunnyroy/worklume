@@ -33,7 +33,7 @@ pub enum Step {
     EndBreak,
     /// The member answers the idle question.
     Answer(Answer),
-    /// The member resumes the timer after a long sleep.
+    /// The member resumes the timer after a long sleep or lock.
     Resume,
     /// The member works, with input on every tick.
     Work(Duration),
@@ -46,6 +46,9 @@ pub enum Step {
     },
     /// The device sleeps.
     Sleep(Duration),
+    /// The member locks the session and is away; someone types at the lock screen, and the
+    /// member types their password to unlock (E12-S03).
+    Lock(Duration),
     /// Someone moves the wall clock by this many seconds.
     ShiftClock(i64),
     /// The device restarts after being off this long.
@@ -85,6 +88,7 @@ impl fmt::Display for Step {
                 seconds(*every)
             ),
             Self::Sleep(duration) => write!(f, "sleep {}", seconds(*duration)),
+            Self::Lock(duration) => write!(f, "lock the session for {}", seconds(*duration)),
             Self::ShiftClock(delta) => write!(f, "move the clock by {delta} s"),
             Self::Reboot(downtime) => write!(f, "reboot, off {}", seconds(*downtime)),
             Self::Crash(down) => write!(f, "crash, down {}", seconds(*down)),
@@ -141,6 +145,7 @@ impl Device {
             Step::Away(duration) => self.away(duration)?,
             Step::Jiggle { duration, every } => self.jiggle(duration, every)?,
             Step::Sleep(duration) => self.sleep(duration),
+            Step::Lock(duration) => self.lock(duration)?,
             Step::ShiftClock(delta) => self.shift_clock(delta),
             Step::Reboot(downtime) => self.reboot(downtime)?,
             Step::Crash(down) => self.crash(down)?,

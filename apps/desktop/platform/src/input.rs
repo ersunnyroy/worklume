@@ -1,8 +1,10 @@
 //! Input events, as timing only: when an input happened and what kind it was (E09-S13).
 //!
 //! The per-OS hook readers arrive with the input stories: a `CGEvent` tap on macOS (Input
-//! Monitoring), Raw Input on Windows, `XInput2` on X11 (E10-S03, E11-S03, E12-S03). Wayland has
-//! no global input events, so its reader reports [`SensorError::Unsupported`]. A reader keeps
+//! Monitoring) and Raw Input on Windows (E10-S03, E11-S03); X11's `XInput2` reader arrived with
+//! E12-S03 (`linux::X11Input`). Wayland has no global input events, so its reader reports
+//! [`SensorError::Unsupported`]. A lock screen's input still reaches a reader on X11; the
+//! timekeeper drops input from locked time. A reader keeps
 //! the kind and the monotonic time of each event, never which key, what text, or where the
 //! pointer is, and buffers them until the agent drains them each tick.
 //!

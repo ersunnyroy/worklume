@@ -43,6 +43,8 @@ pub struct Summary {
     pub entry_ms: i64,
     /// Tracked time by the slots, in seconds.
     pub slot_seconds: i64,
+    /// Active time by the slots, in seconds (E12-S03).
+    pub active_seconds: i64,
     pub slots: usize,
     pub idle_periods: usize,
     pub breaks: usize,
@@ -97,12 +99,14 @@ impl fmt::Display for TimelineCheck {
 ///   changed device clock never reaches event times.
 /// - One time entry is open at a time; each stop closes the open entry, in the same boot and
 ///   not before it began.
-/// - No entry overlaps a stretch in `untracked` (sleep, or no agent running).
+/// - No entry overlaps a stretch in `untracked` (sleep, a locked session, or no agent running).
 /// - Idle periods begin inside a known entry, are resolved once, and one at most is pending at a
 ///   time. One that a pause ends holds at least a second. A `stop` resolution ends the open entry, which is a later one when the agent
 ///   restarted or a gap split the entry while the decision was pending.
 /// - Breaks don't overlap tracking and end once.
 /// - One slot per 10-minute window, with 1 to 600 tracked seconds, attributed to a known entry.
+///   Its active, keyboard and mouse seconds are within its tracked seconds, and keyboard and
+///   mouse are both known or both null.
 /// - Slots add up to the entries' tracked time within one second.
 /// - At the end nothing is open: no entry, idle period or break.
 /// - App and URL usage comes once per kind after its slot, adds up to no more than the slot's
@@ -365,6 +369,7 @@ impl Fold {
         if !self.entries.contains_key(entry_id) {
             self.fail(format!("{label}: unknown entry {entry_id}"));
         }
+        self.activity(label, payload, tracked);
         self.input_features(label, &payload["input_features"]);
         self.summary.slots += 1;
         self.summary.slot_seconds += tracked;
@@ -376,6 +381,31 @@ impl Fold {
                 ..SlotRecord::default()
             },
         );
+    }
+
+    /// Checks a slot's activity: active, keyboard and mouse time within the tracked time, and
+    /// keyboard and mouse either both known or both null.
+    fn activity(&mut self, label: &str, payload: &Value, tracked: i64) {
+        let active = payload["active_seconds"].as_i64();
+        let keyboard = &payload["keyboard_seconds"];
+        let mouse = &payload["mouse_seconds"];
+        if !active.is_some_and(|active| (0..=tracked).contains(&active)) {
+            self.fail(format!(
+                "{label}: {active:?} active seconds of {tracked} tracked"
+            ));
+        }
+        match (keyboard.as_i64(), mouse.as_i64()) {
+            (Some(keyboard), Some(mouse)) => {
+                if !(0..=tracked).contains(&keyboard) || !(0..=tracked).contains(&mouse) {
+                    self.fail(format!(
+                        "{label}: keyboard {keyboard} s and mouse {mouse} s of {tracked} tracked"
+                    ));
+                }
+            }
+            _ if keyboard.is_null() && mouse.is_null() => {}
+            _ => self.fail(format!("{label}: keyboard {keyboard} with mouse {mouse}")),
+        }
+        self.summary.active_seconds += active.unwrap_or_default();
     }
 
     /// Checks a usage batch's slot and total, and returns its records.

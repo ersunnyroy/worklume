@@ -34,7 +34,17 @@ windows-sys = { version = "0.61.2", features = [
 [target.'cfg(target_os = "linux")'.dependencies]
 # Encrypts the D-Bus session with the Secret Service in pure Rust; links the system libdbus.
 dbus-secret-service-keyring-store = { version = "1.0.1", features = ["crypto-rust"] }
+# The same libdbus binding, for logind and the screen saver service (E12-S03).
+dbus = "0.9.12"
 libc = "0.2.189"
+# Waits on the X connection with a timeout, so the input reader can stop.
+rustix = { version = "1.1.5", features = ["event"] }
+# The X11 protocol in pure Rust: no libX11 or libxcb at run time.
+x11rb = { version = "0.13.2", features = ["screensaver", "xinput"] }
+
+# Fakes input through XTEST in the X11 tests.
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+x11rb = { version = "0.13.2", features = ["xtest"] }
 
 [lints]
 workspace = true

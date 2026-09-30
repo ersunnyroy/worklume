@@ -15,10 +15,11 @@ use tempfile::TempDir;
 use uuid::Uuid;
 use worklume_core::catalog::{BreakPolicy, Catalog, CatalogError, Project, Task};
 use worklume_core::timekeeper::{IdlePolicy, KeepIdle, Sensors};
+use worklume_core::tracker::InputMethod;
 use worklume_core::view::{Question, TimerStatus};
 use worklume_desktop::agent::{Agent, AgentError, AgentState, IdleAnswer, Unavailable};
 use worklume_platform::fake::{
-    FakeBrowser, FakeClock, FakeIdle, FakeInput, FakeWindow, MemorySecretStore,
+    FakeBrowser, FakeClock, FakeIdle, FakeInput, FakeLock, FakeWindow, MemorySecretStore,
 };
 
 /// 2026-09-21 14:03:00 UTC.
@@ -35,6 +36,7 @@ struct Device {
     secrets: MemorySecretStore,
     clock: Arc<FakeClock>,
     idle: Arc<FakeIdle>,
+    lock: Arc<FakeLock>,
     agent: Agent,
 }
 
@@ -45,6 +47,7 @@ impl Device {
             dir: TempDir::new().expect("temporary folder"),
             secrets: MemorySecretStore::default(),
             idle: Arc::new(FakeIdle::new(Arc::clone(&clock))),
+            lock: Arc::new(FakeLock::default()),
             clock,
             agent: Agent::new(Box::new(|| MIDNIGHT)),
         };
@@ -59,6 +62,7 @@ impl Device {
             window: Arc::new(FakeWindow::default()),
             browser: Arc::new(FakeBrowser::default()),
             input: Arc::new(FakeInput::default()),
+            lock: Arc::clone(&self.lock) as _,
         }
     }
 
@@ -66,7 +70,12 @@ impl Device {
         let device = Self::new();
         device
             .agent
-            .open(device.dir.path(), &device.secrets, device.sensors())
+            .open(
+                device.dir.path(),
+                &device.secrets,
+                device.sensors(),
+                InputMethod::Hooks,
+            )
             .expect("the store opens");
         device
             .agent
@@ -229,9 +238,12 @@ fn a_store_that_cannot_open_leaves_the_agent_unavailable() {
     let device = Device::new();
     device.secrets.set_unavailable(true);
     assert_eq!(
-        device
-            .agent
-            .open(device.dir.path(), &device.secrets, device.sensors()),
+        device.agent.open(
+            device.dir.path(),
+            &device.secrets,
+            device.sensors(),
+            InputMethod::Hooks
+        ),
         Err(Unavailable::CredentialStore)
     );
     assert_eq!(
@@ -252,7 +264,12 @@ fn a_store_that_cannot_open_leaves_the_agent_unavailable() {
     device.secrets.set_unavailable(false);
     device
         .agent
-        .open(device.dir.path(), &device.secrets, device.sensors())
+        .open(
+            device.dir.path(),
+            &device.secrets,
+            device.sensors(),
+            InputMethod::Hooks,
+        )
         .expect("the store opens");
     assert!(matches!(device.agent.state(), AgentState::Ready(_)));
 }
@@ -262,7 +279,12 @@ fn a_second_agent_cannot_open_the_same_store() {
     let first = Device::opened();
     let second = Agent::new(Box::new(|| MIDNIGHT));
     assert_eq!(
-        second.open(first.dir.path(), &first.secrets, first.sensors()),
+        second.open(
+            first.dir.path(),
+            &first.secrets,
+            first.sensors(),
+            InputMethod::Hooks
+        ),
         Err(Unavailable::InUse)
     );
 }
@@ -276,7 +298,12 @@ fn the_timer_carries_on_after_the_agent_restarts() {
     let sensors = device.sensors();
     drop(device.agent);
     restarted
-        .open(device.dir.path(), &device.secrets, sensors)
+        .open(
+            device.dir.path(),
+            &device.secrets,
+            sensors,
+            InputMethod::Hooks,
+        )
         .expect("reopens");
     restarted.set_catalog(catalog()).expect("ready");
     let AgentState::Ready(timer) = restarted.state() else {

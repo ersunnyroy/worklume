@@ -14,7 +14,7 @@ use worklume_core::tracker::{
 };
 use worklume_core::usage::{PrivateWindows, UsageLevel, UsagePolicy};
 use worklume_platform::fake::{
-    FakeBrowser, FakeClock, FakeIdle, FakeInput, FakeWindow, MemorySecretStore,
+    FakeBrowser, FakeClock, FakeIdle, FakeInput, FakeLock, FakeWindow, MemorySecretStore,
 };
 use worklume_platform::{BrowserTab, ClockReading, ForegroundApp, InputActivity, SensorError};
 use worklume_storage::{StorageError, Store};
@@ -128,6 +128,8 @@ enum Input {
     Person,
     /// A jiggler moves the pointer every so many milliseconds while the member is away.
     Jiggler { every_ms: i64 },
+    /// Someone types at the lock screen.
+    LockScreen,
 }
 
 /// A failure of the harness itself, or of the agent in a way no scenario asks for.
@@ -168,7 +170,10 @@ pub struct Device {
     window: Arc<FakeWindow>,
     browser: Arc<FakeBrowser>,
     input: Arc<FakeInput>,
+    lock: Arc<FakeLock>,
     hands: Hands,
+    /// Typing at the lock screen: never in the ledger, since none of it may count.
+    lock_hands: Hands,
     secrets: MemorySecretStore,
     dir: TempDir,
     config: DeviceConfig,
@@ -210,7 +215,9 @@ impl Device {
             window,
             browser: Arc::new(FakeBrowser::default()),
             input: Arc::new(FakeInput::default()),
+            lock: Arc::new(FakeLock::default()),
             hands: Hands::default(),
+            lock_hands: Hands::default(),
             secrets: MemorySecretStore::default(),
             dir: TempDir::new()?,
             config,
@@ -249,7 +256,7 @@ impl Device {
         &self.prompts
     }
 
-    /// When the device slept or ran no agent, in its monotonic time.
+    /// When the device slept, was locked or ran no agent, in its monotonic time.
     #[must_use]
     pub fn untracked(&self) -> &[Span] {
         &self.untracked
@@ -324,6 +331,31 @@ impl Device {
         self.pass(duration, Input::Jiggler { every_ms })
     }
 
+    /// The member locks the session for `duration` and is away; someone types at the lock
+    /// screen meanwhile, and the member types their password just before unlocking. The
+    /// reader hands the password over only on the next tick, after the unlock.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the agent fails.
+    pub fn lock(&mut self, duration: Duration) -> Result<(), SimError> {
+        let now = self.clock.reading();
+        self.untracked.push(Span {
+            boot_id: now.boot_id,
+            from_ms: now.mono_ms,
+            to_ms: now.mono_ms + millis_i64(duration),
+            why: "locked",
+        });
+        self.lock.set(true);
+        self.pass(duration, Input::LockScreen)?;
+        let now = self.clock.reading().mono_ms;
+        let password = self.lock_hands.person(now - 900, now);
+        self.input.push(password);
+        self.idle.input();
+        self.lock.set(false);
+        Ok(())
+    }
+
     fn pass(&mut self, duration: Duration, input: Input) -> Result<(), SimError> {
         let mut left = duration;
         let mut next_jiggle = match input {
@@ -345,25 +377,14 @@ impl Device {
                 Input::Jiggler { every_ms } => {
                     self.hands.jiggler(from, to, &mut next_jiggle, every_ms)
                 }
+                Input::LockScreen => self.lock_hands.person(from, to),
             };
-            let activity = match input {
-                Input::Person => Activity {
-                    active_ms: millis_u64(step) * 3 / 4,
-                    keyboard_ms: Some(millis_u64(step) / 2),
-                    mouse_ms: Some(millis_u64(step) / 4),
-                },
-                _ if events.is_empty() => Activity::NONE,
-                _ => Activity {
-                    active_ms: 1_000.min(millis_u64(step)),
-                    keyboard_ms: Some(0),
-                    mouse_ms: Some(1_000.min(millis_u64(step))),
-                },
-            };
-            if input == Input::Person || !events.is_empty() {
+            if matches!(input, Input::Person | Input::LockScreen) || !events.is_empty() {
                 self.idle.input();
             }
             self.input.push(events);
-            let outcome = agent.keeper.tick(activity)?;
+            // Activity is measured from the events, as in the app (E12-S03).
+            let outcome = agent.keeper.tick_measured()?;
             self.record(outcome);
         }
         Ok(())
@@ -453,6 +474,7 @@ impl Device {
             window: Arc::clone(&self.window) as _,
             browser: Arc::clone(&self.browser) as _,
             input: Arc::clone(&self.input) as _,
+            lock: Arc::clone(&self.lock) as _,
         };
         let (mut keeper, recovery) = Timekeeper::open(
             Arc::clone(&store),
@@ -542,7 +564,7 @@ impl Device {
         })
     }
 
-    /// Resumes the timer after a long sleep.
+    /// Resumes the timer after a long sleep or lock.
     ///
     /// # Errors
     ///
@@ -761,10 +783,6 @@ fn target(project: u8) -> WorkTarget {
         ),
         task_id: None,
     }
-}
-
-fn millis_u64(duration: Duration) -> u64 {
-    u64::try_from(duration.as_millis()).unwrap_or(u64::MAX)
 }
 
 fn millis_i64(duration: Duration) -> i64 {

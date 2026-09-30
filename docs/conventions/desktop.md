@@ -351,8 +351,8 @@ reasons:
 - It needs no message loop, D-Bus connection or permission.
 - It works the same on every OS.
 
-`PowerEvents` is still the place for session lock and unlock, which clocks can't see. The
-tracker already supports `pause(SessionLocked)`, and the per-OS stories wire the events.
+A locked session is read the same way, as a state on every tick rather than through events
+(the `SessionLock` trait, E12-S03): see "Locked session" below.
 
 **Idle.** While the timer runs, inactivity is the time since the last input. It counts at the
 earliest from the last decision about idle time, or from the timer's start. When inactivity
@@ -371,6 +371,28 @@ is the inactivity before the sleep plus the sleep itself.
   - Otherwise the only question is whether to resume.
   - If idle time was already awaiting a decision, that question stands; it is not asked again.
 
+**Locked session** (E12-S03). A lock is an absence like a sleep, except that the device stays
+awake, and it matters for privacy: on X11 the lock screen's input, a password being typed,
+still reaches the agent (`docs/spikes/E12-S01-x11.md`).
+
+- The timekeeper reads `SessionLock::locked()` on every call. A reading that fails keeps the
+  state last known, so a flaky reader never unlocks; `Unsupported` never locks.
+- On locking, the entry closes at the reading before the lock was seen (`timer.stopped`, reason
+  `session_locked`), so locked time is never tracked. Idle time awaiting a decision stays the
+  question, paused.
+- On unlocking, the absence (inactivity before the lock plus the lock) decides as after a
+  sleep: shorter than the idle timeout, the timer resumes in a new entry (trigger `resume`);
+  longer, the member is asked whether to resume, and under `never` the timer stops. A lock that
+  began before the agent started has an unknown length, so the member is asked. Without idle
+  detection every unlock resumes.
+- A device that sleeps while locked, or locks as it sleeps (a closed lid), resumes only once
+  unlocked.
+- Questions about resuming, and the `never` policy's stop, wait until the session is unlocked:
+  nobody could see a question behind the lock screen, and the absence's length isn't known yet.
+- **No input from locked time is kept.** Every event up to a reading that found the session
+  locked, or still locked, is dropped, including one the reader hands over late. So is any
+  input in the second the unlock is seen: it can't be told from the password.
+
 **Keep-idle policy** (`idle.keep`, delivered with the config in E09-S06):
 
 | Policy   | Idle while awake                                | Long absence with a sleep                      |
@@ -378,6 +400,8 @@ is the inactivity before the sleep plus the sleep itself.
 | `prompt` | Asks the member                                 | Asks about the idle time, or whether to resume |
 | `always` | Kept when input returns, without asking         | Idle kept; asks whether to resume              |
 | `never`  | Discarded, and the timer stops where idle began | The timer stops; nothing is asked              |
+
+A long lock is decided as a long absence with a sleep.
 
 - A policy decision sends `idle.resolved` with `decided_by: policy`.
 - A timeout of `None` turns idle detection off. Sleep is still never tracked, and every sleep
@@ -388,7 +412,7 @@ is the inactivity before the sleep plus the sleep itself.
 **Prompts.** `Timekeeper::prompt()` is the question the idle dialog (E09-S09) shows.
 
 - `Prompt::Idle` offers keep, discard, reassign or stop.
-- `Prompt::Resume` offers resume or stop.
+- `Prompt::Resume` offers resume or stop, after a long sleep or lock.
 - Each call's `Outcome` reports a new question, for a notification. A question that outlives a
   sleep counts as the same question.
 
@@ -399,6 +423,9 @@ most.
   briefly away or long away before the sleep.
 - Other tests cover short sleeps, answers, clicks just after waking, restarts, policy changes,
   and failed clock reads and saves.
+- `core/tests/lock.rs` covers locks: short and long, each keep-idle policy, inactivity before
+  the lock, a pending idle question, sleeps while locked, failed readings, restarts, no idle
+  detection, and no input kept from locked time even when handed over late.
 - `platform/tests/os_clock.rs` checks the real clocks on each OS in CI.
 - A real sleep can't happen in CI, so sleep detection on real hardware belongs in the release
   test matrix.
@@ -457,6 +484,27 @@ addresses, idle, switching apps, unreadable sensors, a restart, many titles and
 project switches. `usage::tests` covers URL reduction. The simulation harness checks usage in
 every generated script. Mutation checks: 10 of 10 caught.
 
+## Activity
+
+E12-S03: `worklume-core::activity`. A second is active when the member used the keyboard or
+mouse in it (Phase 1, "Activity %"), and a slot's activity is its active time over its tracked
+time. Keyboard and mouse are measured the same way on their own.
+
+- **From input events** where the OS reports them. An input makes the second after it active.
+  Counting from each input rather than on whole clock seconds means a tick boundary never
+  splits or double-counts a second: a single key press is one active second however the ticks
+  fall, and continuous input makes the whole time active. Keys count for the keyboard;
+  pointer moves, clicks and scrolls for the mouse.
+- **From the idle source** where there is no working event reader (Wayland, a denied
+  permission, a reader that failed): the combined figure. Each reading contributes the moment
+  of the last input, so continuous input still covers the whole time. Keyboard and mouse are
+  unknown, which makes the slot's `keyboard_seconds` and `mouse_seconds` null.
+- The meter remembers the last input of each kind, so a second that began in one tick counts in
+  the next. A sleep, a lock or a new boot makes it forget.
+- `Timekeeper::tick_measured` and every timer action measure activity this way; the app and the
+  simulation harness use them. `Timekeeper::tick(activity)` takes a given figure, for tests.
+- Slots report how input was measured: `hooks` with an event reader, `idle_poll` without.
+
 ## Input timing features
 
 E09-S13: `worklume-core::input`, with the `InputActivity` trait in `worklume-platform`. Each
@@ -466,8 +514,8 @@ needed: no event time, key or pointer position ever leaves the device (the accep
 criterion).
 
 **The reader.** `InputActivity::drain` returns the events since the last call: kind (key,
-pointer, click, scroll) and monotonic time, nothing else. The per-OS readers come with E10-S03,
-E11-S03 and E12-S03. They must stamp events with the agent's clock (OS event times count on
+pointer, click, scroll) and monotonic time, nothing else. The X11 reader arrived with E12-S03
+(see "Linux sensors"); macOS and Windows follow with E10-S03 and E11-S03. They must stamp events with the agent's clock (OS event times count on
 other clocks: macOS's stop during sleep), skip key auto-repeat, and bound their buffer.
 Wayland has no global input events, so its reader reports `Unsupported`.
 
@@ -502,7 +550,8 @@ person's are well above.
 **The timekeeper** drains the reader on every call, whatever the state, so the reader never
 holds more than a call's worth. Events are handed to the tracker with the time they fall in.
 If the call fails, they wait for the next one, up to 120,000 events. Events drained after a
-sleep happened around it, in untracked time, and are dropped.
+sleep happened around it, in untracked time, are dropped, and so are events from locked time
+(see "Locked session").
 
 **Open decision.** The architecture has the agent always send the features. Whether they
 should be sent, or kept by the server, only when an organization turns automated-input
@@ -524,6 +573,59 @@ detection on is for E33-S01 (the organization's AI switch) to decide.
 extra fields such as event times or buckets. The harness types and points unevenly on every
 `Work` step, has a `Jiggle` step, and checks the features in every script. Mutation checks: 11
 of 11 caught.
+
+## Linux sensors
+
+E12-S03, after the spike in `docs/spikes/E12-S01-x11.md`. `worklume-platform::linux`:
+
+- **`X11Idle`**: the MIT-SCREEN-SAVER extension's `ms_since_user_input`, under 0.3 ms a
+  reading.
+- **`X11Input`**: `XInput` 2.2 raw events on the root window, read on a thread of its own with
+  its own connection.
+  - Kinds: a key press is `Key`; buttons 4 to 7 (the wheel) are `Scroll`, the others `Click`;
+    motion is `Pointer`, unless it moves only a device's scroll valuators (touchpads,
+    high-resolution wheels), which is `Scroll`. The buttons the server emulates for such
+    scrolling are skipped, so one scroll counts once. Scroll valuators are read per device
+    and again when devices change.
+  - The key code is never read. Auto-repeat doesn't reach raw events; a press flagged as a
+    repeat is skipped anyway.
+  - Each event is stamped with the agent's clock when it arrives, and kept until the agent
+    drains it, up to 20,000 (the oldest go first).
+  - The thread waits on the connection with a half-second timeout (`rustix::event::poll`), so
+    dropping the reader stops it promptly. A reader whose connection fails reports it on the
+    next drain, and activity falls back to the idle source.
+  - Absolute XTEST motion, which some remote-desktop servers inject, produces no raw motion.
+- **`LinuxSessionLock`** (X11 and Wayland alike): logind's `LockedHint` on
+  `/org/freedesktop/login1/session/auto`, the caller's own session or the member's graphical
+  one, falling back to `org.freedesktop.ScreenSaver` or `org.gnome.ScreenSaver` `GetActive` on
+  the session bus. One D-Bus call per reading, with a 250 ms timeout; a failed call reconnects
+  on the next reading. No service at all reads as `Unsupported`.
+- **`DeviceSensors::start`** picks the adapters for this session: on Linux the lock always, and
+  on X11 idle time and input too. What fails to start is logged once per attempt and reads as
+  `Unsupported`, and the agent tracks without it.
+
+**Decision: the `dbus` crate, not `zbus`.** The architecture names `zbus` for the Linux
+modules. The keychain adapter already links the system `libdbus` through the `dbus` crate, and
+the lock needs one blocking property read a second, so the agent keeps one D-Bus stack. `zbus`
+remains the choice if the Wayland work (E13) needs async D-Bus or portals.
+
+**Tested.**
+
+- Unit tests classify raw events: repeats, buttons, the wheel, smooth scrolling and valuator
+  masks.
+- `platform/tests/x11.rs` runs against a real X server, with input faked through XTEST: idle
+  time, every kind of input stamped with the agent's clock, input still arriving while
+  another client holds the keyboard (why locked time drops input), the reader stopping when
+  dropped, and `DeviceSensors` picking the X11 adapters. The tests keep one connection open
+  throughout, because Xvfb resets when its last client leaves and refuses connections while it
+  does.
+- The lock is tested against stand-in logind and screen saver services on a private session
+  bus.
+- These tests are ignored in ordinary runs. The `Desktop` workflow runs them on Ubuntu with
+  `xvfb-run -a dbus-run-session -- cargo test -p worklume-platform --features fake --lib --test
+x11 -- --ignored`.
+- Not covered yet: real GNOME and KDE sessions, real mice and touchpads, and remote desktops
+  (the E12 test matrix).
 
 ## Agent UI
 
@@ -552,9 +654,11 @@ it holds no tracking state and decides nothing (architecture §5).
 - If the store can't open, the agent is `Unavailable` with a reason the UI explains (keychain,
   store in use, store from a newer version, storage, clock, no data folder). The thread retries
   every 30 seconds, and a failure is logged once until it changes.
-- Sensors the per-OS adapters don't provide yet read `Unsupported` (`worklume_platform::Unsupported`).
-  Until they do, the app tracks time without idle detection, app usage or input features, and
-  reports `input_method: idle_poll`.
+- The sensors come from `worklume_platform::DeviceSensors` (see "Linux sensors"). On Linux X11
+  the app measures idle time, input and activity (`input_method: hooks`) and pauses when the
+  session locks. Elsewhere, sensors without an adapter yet read `Unsupported`: the app tracks
+  time without idle detection, app usage or input features, and reports
+  `input_method: idle_poll`.
 - The idle policy and the catalog start empty. The configuration (E09-S06) sets them through
   `Agent::set_idle_policy` and `Agent::set_catalog`. Until then the window says "No projects
   yet".
@@ -607,17 +711,21 @@ simulated device. Its scripted and generated scenarios check the agent end to en
 store to what the server received.
 
 **The device.** A `Device` runs the real `Timekeeper`, tracker and encrypted store in a
-temporary folder, on `FakeClock`, `FakeIdle`, `FakeWindow`, `FakeBrowser`, `FakeInput` and
-`MemorySecretStore`. It can:
+temporary folder, on `FakeClock`, `FakeIdle`, `FakeWindow`, `FakeBrowser`, `FakeInput`,
+`FakeLock` and `MemorySecretStore`. Activity is measured from its input events, as in the app.
+It can:
 
 - work (input every tick: uneven typing, clicks, mouse movements and scrolls, the same on
   every run), be away, be away with a jiggler running, or sleep;
+- lock the session (E12-S03), while someone types at the lock screen and the member types
+  their password to unlock. That typing comes from separate hands, left out of the ledger of
+  inputs made, so any of it reaching the server shows as more inputs than were made;
 - have its wall clock moved, or reboot;
 - lose its agent to a crash, including in the middle of a store write (the store's
   `fault-injection` feature). The watchdog's one-second restart is modelled.
 - go offline, or lose sync answers after the server applied a batch.
 
-It records when it slept or ran no agent, in monotonic time. The member's actions go through
+It records when it slept, was locked or ran no agent, in monotonic time. The member's actions go through
 the timekeeper as the UI's would; actions refused in the current state are logged and skipped,
 like a disabled button.
 
@@ -634,11 +742,13 @@ slots, and reports:
   change leaking into event times);
 - two open entries, a stop for an entry that isn't open, or an entry ending in another boot or
   before it began;
-- any entry overlapping a sleep or a stretch with no agent;
+- any entry overlapping a sleep, a locked session or a stretch with no agent;
 - an idle period outside its entry, resolved twice, overlapping another, or ended by a pause
   with less than a second in it;
 - a break while tracking;
 - a second slot for a window, a slot outside 1–600 s or not on a 10-minute boundary;
+- a slot's active, keyboard or mouse time outside its tracked time, or only one of keyboard and
+  mouse known;
 - slots that disagree with the entries by more than a second;
 - a usage batch with no slot before it, a second batch for a slot, or more usage than the slot
   tracked;
@@ -663,14 +773,17 @@ checker can't pass everything by accident.
 - crashes, including one mid-write;
 - a reboot;
 - a jiggler that keeps the timer running: no idle time, but its slots have entropy and
-  variation 0 while the member's don't.
+  variation 0 while the member's don't;
+- a long and a short lock: locked time never tracked, every input made at the keyboard counted
+  and none from the lock screen;
+- a person at the keyboard measuring 90–100% active.
 
 **Generated scripts** (`tests/properties.rs`): proptest builds scripts of up to 40 random
 steps under random idle and usage policies, with the member switching between an editor,
 browser tabs (some private), the desktop and an app the OS won't describe, and sometimes
 leaving a jiggler running. It shrinks a failure to a short script. The report prints the
 script and a log of what happened. `PROPTEST_CASES` sets the count: 64 locally, 256 in CI.
-10,000 passed before merging (again with E09-S13's input steps).
+10,000 passed before merging (again with E09-S13's input steps, and with E12-S03's locks).
 
 **What it found.** Three defects that the unit tests had missed, fixed with the harness:
 
