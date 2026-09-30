@@ -33,8 +33,10 @@ use x11rb::rust_connection::RustConnection;
 
 use crate::{Clock, IdleError, IdleSource, InputActivity, InputEvent, InputKind, SensorError};
 
+mod capture;
 mod window;
 
+pub use capture::X11Capture;
 pub use window::X11Window;
 
 /// Events kept until the agent drains them: ten seconds of a mouse reporting at 2 kHz. Beyond

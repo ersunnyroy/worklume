@@ -14,6 +14,7 @@
 //! [`DeviceSensors`] picks what this session offers.
 
 mod autostart;
+mod capture;
 mod clock;
 mod detect;
 #[cfg(feature = "fake")]
@@ -29,6 +30,7 @@ mod session;
 mod unsupported;
 
 pub use autostart::{Autostart, AutostartError, LAUNCHED_AT_LOGIN};
+pub use capture::{Frame, Monitor, Monitors, ScreenCapture, distinct_monitors};
 pub use clock::{Clock, ClockError, ClockReading, OsClock};
 pub use detect::{LinuxSession, OperatingSystem, PlatformInfo, linux_session_from_env};
 pub use foreground::{ActiveWindow, BrowserTab, BrowserUrl, ForegroundApp, SensorError};

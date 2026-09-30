@@ -9,7 +9,8 @@ The app opens its encrypted store (`storage/`) and runs the timekeeper (`core/`)
 clock, ticking every second. The window shows the timer, the project picker and the idle
 question through typed commands and an event behind an IPC allowlist (E09-S09). Projects to
 track arrive with sign-in and the configuration (E09-S03, E09-S06). On Linux X11 the agent
-measures idle time, input and activity, reads the app in front (E12-S03, E12-S04), and pauses
+measures idle time, input and activity, reads the app in front, captures each monitor for
+screenshots (E12-S02 to E12-S04), and pauses
 while the session is locked. Its packages start it at login through an XDG autostart entry
 (E12-S05).
 Elsewhere, sensors wait for their per-OS adapters (E10–E13) and read as unsupported.
