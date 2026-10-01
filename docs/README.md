@@ -4,6 +4,7 @@
 | -------------- | ----------------------------------------------------------------------------- |
 | `planning/`    | Research, architecture, database, API and implementation plan. Authoritative. |
 | `conventions/` | How the repository is set up, and decisions made while implementing.          |
+| `spikes/`      | Go/no-go notes from technical spikes, one file per spike story.               |
 
 `planning/` holds Markdown exports of the living planning documents. Diagrams referenced
 there (`media/…`) live in the living documents and are not copied here. When a document
