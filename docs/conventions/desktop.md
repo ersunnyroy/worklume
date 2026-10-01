@@ -397,6 +397,128 @@ most.
 - A real sleep can't happen in CI, so sleep detection on real hardware belongs in the release
   test matrix.
 
+## App and URL usage
+
+E09-S12: `worklume-core::usage`, with the `ActiveWindow` and `BrowserUrl` traits in
+`worklume-platform`. It records what the member had in front of them while the timer ran,
+per 10-minute slot, reduced to what the organization allows before anything is stored.
+
+**Levels** (`UsagePolicy`, from the agent's configuration, E09-S06; `OFF` until it arrives):
+
+| Level     | Kept                                                                                 |
+| --------- | ------------------------------------------------------------------------------------ |
+| `off`     | Nothing, and no sensor is read                                                       |
+| `apps`    | The foreground app: identifier, name                                                 |
+| `domains` | Also the website, as its registrable domain (`mail.example.co.uk` → `example.co.uk`) |
+| `paths`   | Also the URL path                                                                    |
+
+- **Never kept:** query strings, fragments, credentials, addresses that aren't web pages
+  (`file:`, `chrome:`, `about:`…), and a private window's title or path.
+- **Window titles:** only when the organization turns them on (off by default, ADR-014).
+- **Private windows:** keep their domain only, or nothing, by policy (the acceptance
+  criterion). The browser still counts as the app in front.
+- **Domains:** reduced on the device with the Public Suffix List (the `psl` crate, compiled
+  in). A host with no public suffix (`localhost`, intranet names) or an IP address is kept
+  whole. Internationalised names are kept in their ASCII (punycode) form.
+- **Limits:** titles are cut at 256 characters and paths at 512. Each slot keeps up to 50
+  distinct apps and 50 sites in full detail. Beyond that, a new one loses its title or path
+  and merges with the same app or site, up to 100 records.
+
+**Only what's kept is read.** The window title is asked for only when titles are on. The
+browser tab is read from `domains` up, and also at `apps` when titles are on, to learn
+whether the window is private. A tab that can't be read counts as private, so its title is
+dropped. An unreadable foreground app records nothing for that tick; tracking goes on.
+
+**When usage counts.** Only while the timer runs and the member isn't idle. The timekeeper
+reads the sensors only then, and the tracker also leaves idle time out.
+
+**Stored with the slot.** Usage is tallied in the tracker's open slots, so it is part of the
+journal snapshot and survives a crash like the slot's time. When a slot closes, it is followed
+in the same transaction by an `app_usage.batch` and a `url_usage.batch`, sent only when not
+empty. Each references the slot by `slot_id`, and holds whole seconds per record, rounded down,
+so usage never exceeds the slot.
+
+**Contract.** Both event types are in `packages/api-contract/openapi.yaml`. They state the
+server's duties (E16-S02): catalog matching, re-applying the member's current policy, and who
+may read the data (`activity.view_apps`, `activity.view_urls`).
+
+**Open decision.** The data model keeps websites as registrable domains, so `docs.google.com`
+and `mail.google.com` both become `google.com`, even at the `paths` level. The agent follows
+the model. Whether to keep the host as well is for E16-S01 to decide.
+
+**Tested.** `core/tests/usage.rs` covers each level, titles, private windows, non-web
+addresses, idle, switching apps, unreadable sensors, a restart, many titles and
+project switches. `usage::tests` covers URL reduction. The simulation harness checks usage in
+every generated script. Mutation checks: 10 of 10 caught.
+
+## Input timing features
+
+E09-S13: `worklume-core::input`, with the `InputActivity` trait in `worklume-platform`. Each
+slot carries statistics about the rhythm of input, so the server's automated-input detector
+(E33-S03) can tell a person from a mouse jiggler or an auto-clicker. No keystroke log is
+needed: no event time, key or pointer position ever leaves the device (the acceptance
+criterion).
+
+**The reader.** `InputActivity::drain` returns the events since the last call: kind (key,
+pointer, click, scroll) and monotonic time, nothing else. The per-OS readers come with E10-S03,
+E11-S03 and E12-S03. They must stamp events with the agent's clock (OS event times count on
+other clocks: macOS's stop during sleep), skip key auto-repeat, and bound their buffer.
+Wayland has no global input events, so its reader reports `Unsupported`.
+
+**What counts as one input.** A key press, a click, a pointer movement or a scroll gesture.
+Pointer and scroll reports less than 250 ms apart are one movement: a mouse reports its
+position many times a second at a steady rate, which would make every hand look like a
+machine.
+
+**Intervals** are measured between consecutive inputs of any kind, and of each kind, only
+while the timer runs and the member isn't idle. One over 60 s is a pause, not a rhythm, and
+isn't counted. Idle time, a pause, a break, a gap, a reboot or an agent restart forgets the
+previous input, so no interval spans one. An interval belongs to the slot of the input that
+ends it.
+
+**Kept and sent.** A slot keeps only totals: inputs per kind, and per interval kind a histogram
+of 16 log2 buckets of milliseconds with count, sum and sum of squares. The last input's time,
+needed to measure the next interval, stays in memory and is never saved. `slot.closed` sends
+less still, as `input_features` (version 1):
+
+| Field            | Meaning                                                                   |
+| ---------------- | ------------------------------------------------------------------------- |
+| `events`         | Inputs per kind                                                           |
+| `keyboard_share` | Key presses as a share of all inputs                                      |
+| `intervals.*`    | For `any` and each kind: `count`, `entropy_bits` (0–4) and `cv` (SD/mean) |
+
+Statistics are null below 5 intervals, too few to judge. The whole object is null when the
+slot had no input the agent could see. Values are rounded to 3 decimals. The histogram itself
+isn't sent: typing rhythm is a biometric, so only what the detector needs leaves the device.
+A jiggler or an auto-clicker repeats one interval, so its entropy and variation are 0; a
+person's are well above.
+
+**The timekeeper** drains the reader on every call, whatever the state, so the reader never
+holds more than a call's worth. Events are handed to the tracker with the time they fall in.
+If the call fails, they wait for the next one, up to 120,000 events. Events drained after a
+sleep happened around it, in untracked time, and are dropped.
+
+**Open decision.** The architecture has the agent always send the features. Whether they
+should be sent, or kept by the server, only when an organization turns automated-input
+detection on is for E33-S01 (the organization's AI switch) to decide.
+
+**Tested.** `core/tests/input.rs`:
+
+- no input's time, monotonic or wall, is in the journal or the outbox, across a restart and a
+  sleep (the acceptance criterion);
+- the saved state doesn't grow with input;
+- a jiggler and a person give different features;
+- input counts only while the timer runs and the member isn't idle;
+- no interval spans a stop, a restart or a sleep;
+- an interval belongs to the slot of its later input;
+- a failed save counts its input once, and input around a sleep is dropped;
+- a reader that can't see input sends null.
+
+`input::tests` covers movements, pauses, entropy and variation. The contract tests refuse
+extra fields such as event times or buckets. The harness types and points unevenly on every
+`Work` step, has a `Jiggle` step, and checks the features in every script. Mutation checks: 11
+of 11 caught.
+
 ## Simulation harness
 
 E09-S14: `apps/desktop/simulation` (`worklume-simulation`) runs the real agent core on a
@@ -404,9 +526,11 @@ simulated device. Its scripted and generated scenarios check the agent end to en
 store to what the server received.
 
 **The device.** A `Device` runs the real `Timekeeper`, tracker and encrypted store in a
-temporary folder, on `FakeClock`, `FakeIdle` and `MemorySecretStore`. It can:
+temporary folder, on `FakeClock`, `FakeIdle`, `FakeWindow`, `FakeBrowser`, `FakeInput` and
+`MemorySecretStore`. It can:
 
-- work (input every tick), be away, or sleep;
+- work (input every tick: uneven typing, clicks, mouse movements and scrolls, the same on
+  every run), be away, be away with a jiggler running, or sleep;
 - have its wall clock moved, or reboot;
 - lose its agent to a crash, including in the middle of a store write (the store's
   `fault-injection` feature). The watchdog's one-second restart is modelled.
@@ -435,6 +559,13 @@ slots, and reports:
 - a break while tracking;
 - a second slot for a window, a slot outside 1–600 s or not on a 10-minute boundary;
 - slots that disagree with the entries by more than a second;
+- a usage batch with no slot before it, a second batch for a slot, or more usage than the slot
+  tracked;
+- usage detail beyond the most any policy in the run allowed: titles or paths when none was
+  allowed, a private window's title or path, or a query or fragment in a path;
+- input features that contradict themselves (a wrong share, more intervals than inputs,
+  statistics from fewer than 5 intervals, values out of range), or slots counting more inputs
+  of a kind than were made;
 - anything left open at the end, or events that never reached the server.
 
 `tests/checker.rs` damages a clean day in each of these ways and expects the report, so the
@@ -447,12 +578,16 @@ checker can't pass everything by accident.
 - a sleep under each keep-idle policy;
 - clock changes;
 - crashes, including one mid-write;
-- a reboot.
+- a reboot;
+- a jiggler that keeps the timer running: no idle time, but its slots have entropy and
+  variation 0 while the member's don't.
 
 **Generated scripts** (`tests/properties.rs`): proptest builds scripts of up to 40 random
-steps under a random idle policy, and shrinks a failure to a short script. The report prints
-the script and a log of what happened. `PROPTEST_CASES` sets the count: 64 locally, 256 in CI.
-10,000 passed before merging.
+steps under random idle and usage policies, with the member switching between an editor,
+browser tabs (some private), the desktop and an app the OS won't describe, and sometimes
+leaving a jiggler running. It shrinks a failure to a short script. The report prints the
+script and a log of what happened. `PROPTEST_CASES` sets the count: 64 locally, 256 in CI.
+10,000 passed before merging (again with E09-S13's input steps).
 
 **What it found.** Three defects that the unit tests had missed, fixed with the harness:
 
@@ -462,6 +597,8 @@ the script and a log of what happened. `PROPTEST_CASES` sets the count: 64 local
 - A `stop` decision after a restart split the entry left the server's new entry open; the
   contract now says an idle period spans such splits. Idle time before a sleep could also
   begin before the entry, giving an empty idle period and a pointless question.
+- (E09-S12) At the `apps` level with titles on, a private window's title was kept, because
+  the tab wasn't read below `domains`.
 
 **CI.** The `Desktop simulation (Linux)` job in `ci.yml` runs the harness on every pull request,
 whatever it changes: the scenarios, the checker tests and 256 generated scripts. The Desktop
@@ -545,6 +682,8 @@ the CLI and the crates together.
   shows the idle dialog.
 - Idle source adapters, and session lock and unlock through `PowerEvents`: the per-OS input
   stories (E10-S03, E11-S03, E12-S03, E13-S04).
+- Foreground-app and browser-tab readers: the per-OS window and URL stories. Each browser
+  reader must report private windows for every browser it can read.
 - The simulation harness drives the real sync engine and the offline property tests of E08-S10
   once they exist (E09-S05).
 - A monochrome template tray icon for the macOS menu bar: E10-S07.

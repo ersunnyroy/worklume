@@ -3,7 +3,8 @@
 //!
 //! The envelope time of every event is the moment the change took effect, which is not always
 //! when it was recorded: `idle.detected` is dated when idle began, a restart's `timer.stopped`
-//! when the last snapshot was taken, and `slot.closed` at the end of its window.
+//! when the last snapshot was taken, and `slot.closed` at the end of its window, as are the
+//! slot's `app_usage.batch` and `url_usage.batch`.
 
 use serde_json::{Value, json};
 use uuid::Uuid;
@@ -196,6 +197,45 @@ pub(crate) fn slot_closed(
 }
 
 /// A new, time-ordered ID for a time entry, slot, idle period, break or event.
+/// Time per app in a slot: `apps` are `{identifier, name, title, seconds}` objects.
+pub(crate) fn app_usage_batch(
+    slot_id: Uuid,
+    slot_start: &str,
+    at: &Moment,
+    apps: Vec<Value>,
+) -> Result<NewEvent, TrackerError> {
+    event(
+        new_id(),
+        "app_usage.batch",
+        at,
+        fields([
+            ("slot_id", json!(slot_id)),
+            ("slot_start", json!(slot_start)),
+            ("apps", Value::Array(apps)),
+        ]),
+    )
+}
+
+/// Time per website in a slot: `sites` are `{domain, path, browser, private_window, seconds}`
+/// objects.
+pub(crate) fn url_usage_batch(
+    slot_id: Uuid,
+    slot_start: &str,
+    at: &Moment,
+    sites: Vec<Value>,
+) -> Result<NewEvent, TrackerError> {
+    event(
+        new_id(),
+        "url_usage.batch",
+        at,
+        fields([
+            ("slot_id", json!(slot_id)),
+            ("slot_start", json!(slot_start)),
+            ("sites", Value::Array(sites)),
+        ]),
+    )
+}
+
 pub(crate) fn new_id() -> Uuid {
     *EventId::new_v7().as_uuid()
 }

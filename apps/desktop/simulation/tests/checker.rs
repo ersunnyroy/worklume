@@ -10,15 +10,26 @@
 use std::time::Duration;
 
 use serde_json::{Value, json};
-use worklume_simulation::{Answer, Device, DeviceConfig, Span, Step, check};
+use worklume_simulation::{Allowance, Answer, Device, DeviceConfig, Focus, Span, Step, check};
 
 /// A short day with every event type the tracker sends while working: entries, idle time, a
-/// break and several slots.
-fn clean_day() -> (Vec<Value>, Vec<Span>) {
+/// break, several slots, app and website usage including a private window, and input.
+fn clean_day() -> (Vec<Value>, Vec<Span>, Allowance) {
     let mut device = Device::new(DeviceConfig::default()).unwrap();
     for step in [
         Step::Start(1),
-        Step::Work(Duration::from_mins(12)),
+        Step::Work(Duration::from_mins(6)),
+        Step::Focus(Focus::Browser {
+            site: 1,
+            private: false,
+        }),
+        Step::Work(Duration::from_mins(3)),
+        Step::Focus(Focus::Browser {
+            site: 2,
+            private: true,
+        }),
+        Step::Work(Duration::from_mins(3)),
+        Step::Focus(Focus::Editor),
         Step::Away(Duration::from_mins(6)),
         Step::Answer(Answer::Keep),
         Step::Work(Duration::from_mins(3)),
@@ -34,6 +45,7 @@ fn clean_day() -> (Vec<Value>, Vec<Span>) {
     (
         device.server().events().to_vec(),
         device.untracked().to_vec(),
+        device.allowance(),
     )
 }
 
@@ -52,8 +64,8 @@ fn position(events: &[Value], kind: &str) -> usize {
         .unwrap_or_else(|| panic!("the day has a {kind}"))
 }
 
-fn assert_reported(events: &[Value], untracked: &[Span], expected: &str) {
-    let result = check(events, untracked);
+fn assert_reported(events: &[Value], untracked: &[Span], allowance: &Allowance, expected: &str) {
+    let result = check(events, untracked, allowance);
     assert!(
         result
             .violations
@@ -66,48 +78,59 @@ fn assert_reported(events: &[Value], untracked: &[Span], expected: &str) {
 
 #[test]
 fn a_clean_day_passes() {
-    let (events, untracked) = clean_day();
-    let result = check(&events, &untracked);
+    let (events, untracked, allowance) = clean_day();
+    let result = check(&events, &untracked, &allowance);
     assert!(result.violations.is_empty(), "{result}");
     assert_eq!(result.summary.idle_periods, 1);
     assert_eq!(result.summary.breaks, 1);
     assert!(result.summary.slots >= 3);
+    assert!(result.summary.usage_batches >= 4);
+    assert!(result.summary.site_seconds >= 6 * 60 - 2);
+    assert!(result.summary.slots_with_input >= 3);
+    // All the work happened while tracking, so every input made is counted.
+    assert_eq!(result.summary.inputs, allowance.inputs);
+    assert!(allowance.inputs.key > 100 && allowance.inputs.pointer > 10);
 }
 
 #[test]
 fn a_missing_stop_is_reported() {
-    let (mut events, untracked) = clean_day();
+    let (mut events, untracked, allowance) = clean_day();
     let last_stop = events
         .iter()
         .rposition(|event| event["type"] == "timer.stopped")
         .unwrap();
     events.remove(last_stop);
-    assert_reported(&renumber(events), &untracked, "still open at the end");
+    assert_reported(
+        &renumber(events),
+        &untracked,
+        &allowance,
+        "still open at the end",
+    );
 }
 
 #[test]
 fn a_second_open_entry_is_reported() {
-    let (mut events, untracked) = clean_day();
+    let (mut events, untracked, allowance) = clean_day();
     let start = position(&events, "timer.started");
     let mut again = events[start].clone();
     again["event_id"] = json!("01920000-0000-7000-8000-00000000ffff");
     events.insert(start + 1, again);
-    assert_reported(&renumber(events), &untracked, "is still open");
+    assert_reported(&renumber(events), &untracked, &allowance, "is still open");
 }
 
 #[test]
 fn a_repeated_window_is_reported() {
-    let (mut events, untracked) = clean_day();
+    let (mut events, untracked, allowance) = clean_day();
     let slot = position(&events, "slot.closed");
     let mut again = events[slot].clone();
     again["event_id"] = json!("01920000-0000-7000-8000-00000000fffe");
     events.insert(slot + 1, again);
-    assert_reported(&renumber(events), &untracked, "a second slot");
+    assert_reported(&renumber(events), &untracked, &allowance, "a second slot");
 }
 
 #[test]
 fn a_clock_change_in_event_times_is_reported() {
-    let (mut events, untracked) = clean_day();
+    let (mut events, untracked, allowance) = clean_day();
     let slot = position(&events, "slot.closed");
     let wall = events[slot]["wall_time"].as_str().unwrap().to_owned();
     // One second later on the wall clock, the same monotonic reading.
@@ -115,12 +138,17 @@ fn a_clock_change_in_event_times_is_reported() {
         worklume_simulation::parse_rfc3339_ms(&wall).unwrap() + 1_000,
     );
     events[slot]["wall_time"] = json!(shifted);
-    assert_reported(&events, &untracked, "off this boot's monotonic time");
+    assert_reported(
+        &events,
+        &untracked,
+        &allowance,
+        "off this boot's monotonic time",
+    );
 }
 
 #[test]
 fn time_tracked_while_asleep_is_reported() {
-    let (events, mut untracked) = clean_day();
+    let (events, mut untracked, allowance) = clean_day();
     let start = position(&events, "timer.started");
     let mono = &events[start]["mono_time"];
     untracked.push(Span {
@@ -129,45 +157,174 @@ fn time_tracked_while_asleep_is_reported() {
         to_ms: mono["ms"].as_i64().unwrap() + 120_000,
         why: "asleep",
     });
-    assert_reported(&events, &untracked, "tracks time while asleep");
+    assert_reported(&events, &untracked, &allowance, "tracks time while asleep");
 }
 
 #[test]
 fn an_unresolved_idle_period_is_reported() {
-    let (mut events, untracked) = clean_day();
+    let (mut events, untracked, allowance) = clean_day();
     events.remove(position(&events, "idle.resolved"));
-    assert_reported(&renumber(events), &untracked, "still pending at the end");
+    assert_reported(
+        &renumber(events),
+        &untracked,
+        &allowance,
+        "still pending at the end",
+    );
 }
 
 #[test]
 fn slots_that_disagree_with_the_entries_are_reported() {
-    let (mut events, untracked) = clean_day();
+    let (mut events, untracked, allowance) = clean_day();
     let slot = position(&events, "slot.closed");
     let tracked = events[slot]["payload"]["tracked_seconds"].as_i64().unwrap();
     events[slot]["payload"]["tracked_seconds"] = json!(tracked - 2);
-    assert_reported(&events, &untracked, "slots hold");
+    assert_reported(&events, &untracked, &allowance, "slots hold");
 }
 
 #[test]
 fn an_out_of_range_slot_is_reported() {
-    let (mut events, untracked) = clean_day();
+    let (mut events, untracked, allowance) = clean_day();
     let slot = position(&events, "slot.closed");
     events[slot]["payload"]["tracked_seconds"] = json!(601);
-    assert_reported(&events, &untracked, "601 tracked seconds");
+    assert_reported(&events, &untracked, &allowance, "601 tracked seconds");
 }
 
 #[test]
 fn a_gap_in_the_sequence_is_reported() {
-    let (mut events, untracked) = clean_day();
+    let (mut events, untracked, allowance) = clean_day();
     events[3]["seq"] = json!(40);
-    assert_reported(&events, &untracked, "follows seq");
+    assert_reported(&events, &untracked, &allowance, "follows seq");
 }
 
 #[test]
 fn a_break_while_tracking_is_reported() {
-    let (mut events, untracked) = clean_day();
+    let (mut events, untracked, allowance) = clean_day();
     let stop_before_break = position(&events, "break.started") - 1;
     assert_eq!(events[stop_before_break]["payload"]["reason"], "break");
     events.remove(stop_before_break);
-    assert_reported(&renumber(events), &untracked, "the timer still runs");
+    assert_reported(
+        &renumber(events),
+        &untracked,
+        &allowance,
+        "the timer still runs",
+    );
+}
+
+fn first_batch(events: &[Value], kind: &str) -> usize {
+    position(events, kind)
+}
+
+#[test]
+fn a_title_kept_with_titles_off_is_reported() {
+    let (events, untracked, mut allowance) = clean_day();
+    allowance.usage.window_titles = false;
+    assert_reported(&events, &untracked, &allowance, "kept with titles off");
+}
+
+#[test]
+fn a_private_window_title_is_reported() {
+    let (mut events, untracked, allowance) = clean_day();
+    let batch = first_batch(&events, "app_usage.batch");
+    let private_title = allowance
+        .usage
+        .private_titles
+        .iter()
+        .next()
+        .unwrap()
+        .clone();
+    events[batch]["payload"]["apps"][0]["title"] = json!(private_title);
+    assert_reported(&events, &untracked, &allowance, "of a private window kept");
+}
+
+#[test]
+fn a_query_in_a_path_is_reported() {
+    let (mut events, untracked, allowance) = clean_day();
+    let batch = first_batch(&events, "url_usage.batch");
+    events[batch]["payload"]["sites"][0]["path"] = json!("/page/1?session=secret");
+    assert_reported(&events, &untracked, &allowance, "is not a bare path");
+}
+
+#[test]
+fn a_private_window_path_is_reported() {
+    let (mut events, untracked, allowance) = clean_day();
+    let batch = events
+        .iter()
+        .position(|event| {
+            event["type"] == "url_usage.batch"
+                && event["payload"]["sites"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|site| site["private_window"] == true)
+        })
+        .unwrap();
+    let sites = events[batch]["payload"]["sites"].as_array_mut().unwrap();
+    let private = sites
+        .iter_mut()
+        .find(|site| site["private_window"] == true)
+        .unwrap();
+    private["path"] = json!("/page/2");
+    assert_reported(&events, &untracked, &allowance, "of a private window kept");
+}
+
+#[test]
+fn usage_beyond_the_slot_is_reported() {
+    let (mut events, untracked, allowance) = clean_day();
+    let batch = first_batch(&events, "app_usage.batch");
+    events[batch]["payload"]["apps"][0]["seconds"] = json!(600);
+    events[batch]["payload"]["apps"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({"identifier": "x", "name": "X", "title": null, "seconds": 600}));
+    assert_reported(&events, &untracked, &allowance, "s of usage in a slot of");
+}
+
+#[test]
+fn usage_without_its_slot_is_reported() {
+    let (mut events, untracked, allowance) = clean_day();
+    let batch = first_batch(&events, "app_usage.batch");
+    events[batch]["payload"]["slot_id"] = json!("01920000-0000-7000-8000-00000000fffd");
+    assert_reported(&events, &untracked, &allowance, "was not sent before it");
+}
+
+fn first_features(events: &[Value]) -> usize {
+    events
+        .iter()
+        .position(|event| {
+            event["type"] == "slot.closed" && !event["payload"]["input_features"].is_null()
+        })
+        .unwrap()
+}
+
+#[test]
+fn inconsistent_input_features_are_reported() {
+    let (events, untracked, allowance) = clean_day();
+    let slot = first_features(&events);
+    let damage: [(&str, Value, &str); 6] = [
+        ("/version", json!(2), "have version 2"),
+        ("/keyboard_share", json!(0.123), "keyboard share"),
+        ("/events/key", json!(0), "keyboard share"),
+        ("/intervals/any/count", json!(1_000_000), "intervals for"),
+        ("/intervals/key/count", json!(3), "statistics from only 3"),
+        ("/intervals/pointer/entropy_bits", json!(4.5), "bits"),
+    ];
+    for (pointer, value, expected) in damage {
+        let mut events = events.clone();
+        *events[slot]["payload"]["input_features"]
+            .pointer_mut(pointer)
+            .unwrap() = value;
+        assert_reported(&events, &untracked, &allowance, expected);
+    }
+    let mut events = events;
+    for kind in ["key", "pointer", "click", "scroll"] {
+        events[slot]["payload"]["input_features"]["events"][kind] = json!(0);
+    }
+    assert_reported(&events, &untracked, &allowance, "count no input");
+}
+
+#[test]
+fn more_inputs_than_were_made_are_reported() {
+    let (events, untracked, mut allowance) = clean_day();
+    allowance.inputs.click -= 1;
+    assert_reported(&events, &untracked, &allowance, "more than the");
 }

@@ -5,16 +5,30 @@
 //! Durations accumulate in milliseconds. Seconds are rounded on running totals rather than per
 //! slot, so however many slots a day has, their seconds add up to the tracked time within one
 //! second (the E09-S04 acceptance criterion).
+//!
+//! A slot also keeps the time per app and website (E09-S12), sent with it as `app_usage.batch`
+//! and `url_usage.batch`. Those seconds are rounded down per record, so they never exceed the
+//! slot's time. And it keeps input timing totals (E09-S13, see [`crate::input`]), sent in its
+//! `slot.closed` as `input_features`.
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use uuid::Uuid;
+use worklume_platform::InputEvent;
 use worklume_storage::NewEvent;
 
 use super::TrackerError;
 use super::events::{self, fields};
 use super::state::{Entry, WorkTarget};
+use crate::input::{InputStats, Rhythm};
 use crate::time::{Moment, rfc3339_utc};
+use crate::usage::{AppUse, SiteUse, UsageSample};
+
+/// Distinct apps or sites a slot keeps in full detail. Beyond it, new ones lose their title or
+/// path and merge with the same app or site.
+const DETAILED_RECORDS: usize = 50;
+/// Distinct apps or sites a slot keeps at all; time on more is not recorded.
+const MAX_RECORDS: usize = 100;
 
 /// Length of a slot.
 pub const SLOT_MS: i64 = 600_000;
@@ -79,6 +93,54 @@ pub(crate) struct OpenSlot {
     clock_adjusted: bool,
     /// Tracked time per entry, to attribute the slot to the entry with the most.
     shares: Vec<Share>,
+    /// Time per app and per website in front while the timer ran and the member wasn't idle
+    /// (E09-S12), already reduced to what the usage policy keeps.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    apps: Vec<Tally<AppUse>>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    sites: Vec<Tally<SiteUse>>,
+    /// Input timing totals (E09-S13): counts and interval histograms, never event times.
+    #[serde(default, skip_serializing_if = "InputStats::is_empty")]
+    input: InputStats,
+}
+
+/// Milliseconds on one app or site.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct Tally<K> {
+    key: K,
+    ms: u64,
+}
+
+/// Adds `ms` to `key`'s tally, coarsening the key once the slot holds many.
+fn tally<K: PartialEq + Clone>(tallies: &mut Vec<Tally<K>>, key: &K, coarse: fn(&K) -> K, ms: u64) {
+    if let Some(existing) = tallies.iter_mut().find(|tally| tally.key == *key) {
+        existing.ms += ms;
+        return;
+    }
+    let key = if tallies.len() >= DETAILED_RECORDS {
+        coarse(key)
+    } else {
+        key.clone()
+    };
+    if let Some(existing) = tallies.iter_mut().find(|tally| tally.key == key) {
+        existing.ms += ms;
+    } else if tallies.len() < MAX_RECORDS {
+        tallies.push(Tally { key, ms });
+    }
+}
+
+fn app_without_title(app: &AppUse) -> AppUse {
+    AppUse {
+        title: None,
+        ..app.clone()
+    }
+}
+
+fn site_without_path(site: &SiteUse) -> SiteUse {
+    SiteUse {
+        path: None,
+        ..site.clone()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -119,12 +181,18 @@ struct Totals {
 pub(crate) struct Interval<'a> {
     /// Derived wall time at the start of the interval.
     pub(crate) from_wall_ms: i64,
+    /// Monotonic time at the start of the interval, to place input events.
+    pub(crate) from_mono_ms: i64,
     pub(crate) elapsed_ms: u64,
     pub(crate) activity: Activity,
     pub(crate) entry: &'a Entry,
     pub(crate) idle: bool,
     pub(crate) clock_adjusted: bool,
     pub(crate) anchor: &'a Moment,
+    /// What was in front during the interval.
+    pub(crate) usage: &'a UsageSample,
+    /// Input events during the interval, oldest first.
+    pub(crate) input: &'a [InputEvent],
 }
 
 /// The open slots and the rounding totals.
@@ -132,6 +200,9 @@ pub(crate) struct Interval<'a> {
 pub(crate) struct Slots {
     open: Vec<OpenSlot>,
     totals: Totals,
+    /// The previous inputs, to measure intervals. Never saved: it holds event times.
+    #[serde(skip)]
+    rhythm: Rhythm,
 }
 
 impl Slots {
@@ -140,6 +211,10 @@ impl Slots {
     pub(crate) fn account(&mut self, interval: &Interval<'_>) {
         let elapsed = interval.elapsed_ms;
         if elapsed == 0 {
+            // Inputs at a single instant have no window to go in; no interval may span them.
+            if !interval.input.is_empty() {
+                self.rhythm.forget();
+            }
             return;
         }
         let active = interval.activity.active_ms.min(elapsed);
@@ -172,6 +247,15 @@ impl Slots {
                 _ => slot.split_missing = true,
             }
             slot.clock_adjusted |= interval.clock_adjusted;
+            // Idle time is not usage: the member was away from whatever was in front.
+            if !interval.idle {
+                if let Some(app) = &interval.usage.app {
+                    tally(&mut slot.apps, app, app_without_title, piece);
+                }
+                if let Some(site) = &interval.usage.site {
+                    tally(&mut slot.sites, site, site_without_path, piece);
+                }
+            }
             match slot
                 .shares
                 .iter_mut()
@@ -186,6 +270,44 @@ impl Slots {
             }
             cursor = piece_end;
         }
+        self.count_input(interval);
+    }
+
+    /// Adds the interval's inputs to the slots of their windows. Idle time is not input: it
+    /// forgets the rhythm instead.
+    fn count_input(&mut self, interval: &Interval<'_>) {
+        if interval.idle {
+            self.rhythm.forget();
+            return;
+        }
+        let elapsed = i64::try_from(interval.elapsed_ms).unwrap_or(i64::MAX);
+        let to_mono = interval.from_mono_ms.saturating_add(elapsed);
+        let mut floor = interval.from_mono_ms;
+        for event in interval.input {
+            // Events arrive oldest first and inside the interval; clamping keeps one read a
+            // moment early or late from making a negative interval.
+            let mono = event.mono_ms.clamp(floor, to_mono);
+            floor = mono;
+            let Some(input) = self.rhythm.count(event.kind, mono) else {
+                continue;
+            };
+            // The interval's last instant is in the window of the time just before it: the
+            // next window has no tracked time yet.
+            let offset = (mono - interval.from_mono_ms).min(elapsed - 1);
+            let window_start = (interval.from_wall_ms + offset).div_euclid(SLOT_MS) * SLOT_MS;
+            if let Some(slot) = self
+                .open
+                .iter_mut()
+                .find(|slot| slot.window_start == window_start)
+            {
+                slot.input.add(&input);
+            }
+        }
+    }
+
+    /// Forgets the previous inputs, when time stops counting.
+    pub(crate) fn forget_rhythm(&mut self) {
+        self.rhythm.forget();
     }
 
     /// Marks the slot open at `wall_ms`, if any, as affected by a clock change.
@@ -219,6 +341,9 @@ impl Slots {
                 split_missing: false,
                 clock_adjusted: false,
                 shares: Vec::new(),
+                apps: Vec::new(),
+                sites: Vec::new(),
+                input: InputStats::default(),
             });
             self.open.sort_by_key(|slot| slot.window_start);
         }
@@ -307,9 +432,55 @@ impl Slots {
             ("mouse_seconds", mouse),
             ("idle_seconds", json!(idle)),
             ("input_method", json!(input_method.as_str())),
+            ("input_features", slot.input.features()),
             ("flags", json!(flags)),
         ]);
         out.push(events::slot_closed(slot.slot_id, &at, payload)?);
+
+        let slot_start = rfc3339_utc(slot.window_start);
+        let apps: Vec<Value> = slot
+            .apps
+            .iter()
+            .filter(|tally| tally.ms >= 1_000)
+            .map(|tally| {
+                json!({
+                    "identifier": tally.key.identifier,
+                    "name": tally.key.name,
+                    "title": tally.key.title,
+                    "seconds": tally.ms / 1_000,
+                })
+            })
+            .collect();
+        if !apps.is_empty() {
+            out.push(events::app_usage_batch(
+                slot.slot_id,
+                &slot_start,
+                &at,
+                apps,
+            )?);
+        }
+        let sites: Vec<Value> = slot
+            .sites
+            .iter()
+            .filter(|tally| tally.ms >= 1_000)
+            .map(|tally| {
+                json!({
+                    "domain": tally.key.domain,
+                    "path": tally.key.path,
+                    "browser": tally.key.browser,
+                    "private_window": tally.key.private_window,
+                    "seconds": tally.ms / 1_000,
+                })
+            })
+            .collect();
+        if !sites.is_empty() {
+            out.push(events::url_usage_batch(
+                slot.slot_id,
+                &slot_start,
+                &at,
+                sites,
+            )?);
+        }
         Ok(())
     }
 }

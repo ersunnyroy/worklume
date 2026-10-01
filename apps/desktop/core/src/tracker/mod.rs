@@ -30,6 +30,7 @@ mod state;
 use std::sync::Arc;
 use std::time::Duration;
 
+use worklume_platform::InputEvent;
 use worklume_storage::{
     JournalId, JournalKind, NewEvent, NewJournalEntry, StorageError, Store, Timestamp,
 };
@@ -44,6 +45,25 @@ use events::{StartTrigger, StopReason};
 use slots::{Interval, Slots};
 
 use crate::time::Moment;
+use crate::usage::UsageSample;
+
+/// What the device observed since the previous tick, besides the activity totals.
+#[derive(Debug, Clone, Copy)]
+pub struct Observation<'a> {
+    /// What was in front (E09-S12), already reduced to what the usage policy keeps.
+    pub usage: &'a UsageSample,
+    /// Input events (E09-S13), oldest first. Only their timing is counted, and only while the
+    /// timer runs and the member isn't idle.
+    pub input: &'a [InputEvent],
+}
+
+impl Observation<'_> {
+    /// Nothing observed.
+    pub const NONE: Observation<'static> = Observation {
+        usage: &UsageSample::NONE,
+        input: &[],
+    };
+}
 
 /// Journal kind of the tracker's snapshot.
 pub const SNAPSHOT_KIND: &str = "tracker.snapshot";
@@ -163,11 +183,13 @@ impl Core {
         &mut self,
         now: &Timestamp,
         activity: &Activity,
+        observed: &Observation<'_>,
         config: &TrackerConfig,
         out: &mut Vec<NewEvent>,
     ) -> Result<Moment, TrackerError> {
         let (current, rebooted, jumped) = self.observe(now, config);
         let last = self.last_tick.take();
+        let mut accounted = false;
         // Time cannot be measured across a reboot; recovery handles the timer itself. Open
         // slots stay open: the new boot may carry on in the same window.
         if !rebooted && let (Some(last), Some(entry)) = (last, self.state.entry().cloned()) {
@@ -178,14 +200,22 @@ impl Core {
             } else if let Some(anchor) = self.anchor.clone() {
                 self.slots.account(&Interval {
                     from_wall_ms: last.wall_ms,
+                    from_mono_ms: last.mono_ms,
                     elapsed_ms: elapsed,
                     activity: *activity,
                     entry: &entry,
                     idle: matches!(self.state, TrackerState::IdlePending { .. }),
                     clock_adjusted: jumped,
                     anchor: &anchor,
+                    usage: observed.usage,
+                    input: observed.input,
                 });
+                accounted = true;
             }
+        }
+        // Time that doesn't count breaks the rhythm of input: no interval may span it.
+        if !accounted {
+            self.slots.forget_rhythm();
         }
         if jumped {
             self.slots.flag_clock_adjusted(current.wall_ms);
@@ -334,7 +364,22 @@ impl Tracker {
     ///
     /// Fails when the store fails; the time is then accounted by the next call.
     pub fn tick(&mut self, now: &Timestamp, activity: Activity) -> Result<(), TrackerError> {
-        self.run(now, activity, |_, _, _| Ok(()))
+        self.tick_with(now, activity, &Observation::NONE)
+    }
+
+    /// As [`Tracker::tick`], with what the device observed meanwhile: the app in front and the
+    /// input events.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the store fails; the time is then accounted by the next call.
+    pub fn tick_with(
+        &mut self,
+        now: &Timestamp,
+        activity: Activity,
+        observed: &Observation<'_>,
+    ) -> Result<(), TrackerError> {
+        self.run_with(now, activity, observed, |_, _, _| Ok(()))
     }
 
     /// Starts the timer on `target`.
@@ -605,9 +650,19 @@ impl Tracker {
         activity: Activity,
         action: impl FnOnce(&mut Core, &Moment, &mut Vec<NewEvent>) -> Result<(), TrackerError>,
     ) -> Result<(), TrackerError> {
+        self.run_with(now, activity, &Observation::NONE, action)
+    }
+
+    fn run_with(
+        &mut self,
+        now: &Timestamp,
+        activity: Activity,
+        observed: &Observation<'_>,
+        action: impl FnOnce(&mut Core, &Moment, &mut Vec<NewEvent>) -> Result<(), TrackerError>,
+    ) -> Result<(), TrackerError> {
         let mut next = self.core.clone();
         let mut out = Vec::new();
-        let current = next.advance(now, &activity, &self.config, &mut out)?;
+        let current = next.advance(now, &activity, observed, &self.config, &mut out)?;
         action(&mut next, &current, &mut out)?;
 
         let heartbeat = u64::try_from(self.config.heartbeat_interval.as_millis()).unwrap_or(0);

@@ -153,9 +153,10 @@ export interface components {
          * @description One outbox event. The envelope is the same for every type (architecture §13); `type`
          *     decides the payload. The envelope time is the moment the change took effect, which is not
          *     always when it was recorded: `idle.detected` is dated when idle began, a restart's
-         *     `timer.stopped` at the agent's last snapshot, and `slot.closed` at the end of its window.
+         *     `timer.stopped` at the agent's last snapshot, and `slot.closed` and its usage batches at
+         *     the end of the slot's window.
          */
-        DesktopEvent: components["schemas"]["TimerStartedEvent"] | components["schemas"]["TimerStoppedEvent"] | components["schemas"]["IdleDetectedEvent"] | components["schemas"]["IdleResolvedEvent"] | components["schemas"]["BreakStartedEvent"] | components["schemas"]["BreakEndedEvent"] | components["schemas"]["SlotClosedEvent"];
+        DesktopEvent: components["schemas"]["TimerStartedEvent"] | components["schemas"]["TimerStoppedEvent"] | components["schemas"]["IdleDetectedEvent"] | components["schemas"]["IdleResolvedEvent"] | components["schemas"]["BreakStartedEvent"] | components["schemas"]["BreakEndedEvent"] | components["schemas"]["SlotClosedEvent"] | components["schemas"]["AppUsageBatchEvent"] | components["schemas"]["UrlUsageBatchEvent"];
         DesktopEventEnvelope: {
             /**
              * Format: uuid
@@ -299,6 +300,64 @@ export interface components {
             /** Format: uuid */
             break_id: string;
         };
+        /** @description Time in each foreground application during one slot, sent right after its `slot.closed`. Only time while the timer ran and the member wasn't idle counts, so the seconds never exceed the slot's. The agent keeps only what the member's app and URL policy allows: nothing at level `off`, and window titles only when titles are on (never for a private browser window). The server matches `identifier` to the global application catalog for the device's platform, stores rows in `app_usage` against the slot `slot_id`, which must belong to this device, and drops titles the member's current policy forbids (E16-S02). Application usage is sensitive: it is readable only by the member and by roles with `activity.view_apps` in scope. */
+        AppUsageBatchEvent: components["schemas"]["DesktopEventEnvelope"] & {
+            /** @constant */
+            type: "app_usage.batch";
+            payload: components["schemas"]["AppUsageBatchPayload"];
+        } & {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "app_usage.batch";
+        };
+        AppUsageBatchPayload: {
+            /**
+             * Format: uuid
+             * @description The `event_id` of the slot's `slot.closed`.
+             */
+            slot_id: string;
+            /** Format: date-time */
+            slot_start: string;
+            apps: {
+                /** @description Bundle ID (macOS), executable name (Windows) or desktop-file ID (Linux). */
+                identifier: string;
+                name: string;
+                /** @description The window title, only when the organization keeps titles. */
+                title: string | null;
+                seconds: number;
+            }[];
+        };
+        /** @description Time on each website during one slot, sent right after its `slot.closed`, at the `domains` level and above. `domain` is the registrable domain (eTLD+1), or the whole host when it has no public suffix. `path` is set only at the `paths` level and never for a private window. Query strings, fragments and credentials never leave the device, nor do addresses that aren't web pages. A private window keeps its domain only, or is left out, by policy. The server stores rows in `url_usage` against the slot `slot_id`, which must belong to this device, and drops paths and private-window sites the member's current policy forbids (E16-S02). Website usage is sensitive: it is readable only by the member and by roles with `activity.view_urls` in scope. */
+        UrlUsageBatchEvent: components["schemas"]["DesktopEventEnvelope"] & {
+            /** @constant */
+            type: "url_usage.batch";
+            payload: components["schemas"]["UrlUsageBatchPayload"];
+        } & {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "url_usage.batch";
+        };
+        UrlUsageBatchPayload: {
+            /**
+             * Format: uuid
+             * @description The `event_id` of the slot's `slot.closed`.
+             */
+            slot_id: string;
+            /** Format: date-time */
+            slot_start: string;
+            sites: {
+                domain: string;
+                /** @description The URL path, only at the `paths` level; never a query or fragment. */
+                path: string | null;
+                browser: string;
+                private_window: boolean;
+                seconds: number;
+            }[];
+        };
         /** @description One 10-minute activity slot, whose ID is the event ID, dated at the end of its window. There is at most one per device and window. It belongs to the entry with the most time in it; time entries remain the source of truth for tracked time. */
         SlotClosedEvent: components["schemas"]["DesktopEventEnvelope"] & {
             /** @constant */
@@ -332,8 +391,38 @@ export interface components {
             idle_seconds: number;
             /** @enum {string} */
             input_method: "hooks" | "idle_poll" | "portal";
+            /** @description Input timing statistics for the automated-input detector (E33-S03): the rhythm of key presses, clicks, pointer movements and scroll gestures while the timer ran and the member wasn't idle. Pointer or scroll reports less than 250 ms apart are one movement; intervals over 60 s are pauses and not counted; nothing spans idle time, a pause, a break or a restart. The device computes these from event times it then forgets: no event time, key or pointer position ever leaves it. Null when the slot had no input the agent could see (see `input_method`). Input features are sensitive: the server stores them with the slot for the detector, and no endpoint returns them. */
+            input_features: {
+                /** @constant */
+                version: 1;
+                /** @description Inputs of each kind; at least one in all. */
+                events: {
+                    key: number;
+                    pointer: number;
+                    click: number;
+                    scroll: number;
+                };
+                /** @description Key presses as a share of all inputs, to 3 decimals. */
+                keyboard_share: number;
+                /** @description Intervals between consecutive inputs of any kind, and of each kind. An interval belongs to the slot of the input that ends it. */
+                intervals: {
+                    any: components["schemas"]["InputIntervals"];
+                    key: components["schemas"]["InputIntervals"];
+                    pointer: components["schemas"]["InputIntervals"];
+                    click: components["schemas"]["InputIntervals"];
+                    scroll: components["schemas"]["InputIntervals"];
+                };
+            } | null;
             flags: ("partial_slot" | "clock_adjusted")[];
         };
+        /** @description The intervals of one kind in a slot, or null when there were none. The statistics are null below 5 intervals, too few to judge a rhythm; `cv` is also null when every interval was 0 ms. */
+        InputIntervals: {
+            count: number;
+            /** @description Shannon entropy of the intervals over 16 log2 buckets of milliseconds, to 3 decimals: near 0 for a machine repeating one interval. */
+            entropy_bits: number | null;
+            /** @description Coefficient of variation of the intervals (standard deviation over mean), to 3 decimals. */
+            cv: number | null;
+        } | null;
     };
     responses: {
         /** @description An error, described as RFC 9457 problem details. */

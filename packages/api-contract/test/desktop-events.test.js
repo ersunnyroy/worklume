@@ -96,6 +96,78 @@ describe('desktop events', () => {
     }
   });
 
+  it('refuse usage detail the agent never sends', () => {
+    const apps = events.find((event) => event.type === 'app_usage.batch');
+    const urls = events.find((event) => event.type === 'url_usage.batch');
+    assert.ok(apps && urls);
+    const app = /** @type {Record<string, unknown>[]} */ (apps.payload['apps'])[0];
+    const site = /** @type {Record<string, unknown>[]} */ (urls.payload['sites'])[0];
+    for (const broken of [
+      { ...urls, payload: { ...urls.payload, sites: [{ ...site, path: '/search?q=salary' }] } },
+      { ...urls, payload: { ...urls.payload, sites: [{ ...site, path: '/a#b' }] } },
+      { ...urls, payload: { ...urls.payload, sites: [{ ...site, url: 'https://github.com/' }] } },
+      { ...urls, payload: { ...urls.payload, sites: [] } },
+      { ...apps, payload: { ...apps.payload, apps: [{ ...app, title: '' }] } },
+      { ...apps, payload: { ...apps.payload, apps: [{ ...app, seconds: 0 }] } },
+      { ...apps, payload: { ...apps.payload, apps: [{ ...app, seconds: 601 }] } },
+      { ...apps, payload: { ...apps.payload, member_id: apps.payload['slot_id'] } },
+    ]) {
+      assert.notDeepEqual(errors(broken), [], JSON.stringify(broken.payload));
+    }
+    assert.deepEqual(
+      errors({ ...urls, payload: { ...urls.payload, sites: [{ ...site, path: null }] } }),
+      [],
+    );
+  });
+
+  it('carry input features as statistics, never event times', () => {
+    const slot = events.find(
+      (event) => event.type === 'slot.closed' && event.payload['input_features'] !== null,
+    );
+    assert.ok(slot);
+    /** @typedef {Record<string, unknown>} Intervals */
+    const features =
+      /** @type {{ events: Record<string, number>, intervals: Record<string, Intervals> } & Record<string, unknown>} */ (
+        slot.payload['input_features']
+      );
+    const { intervals } = features;
+    /** @param {unknown} inputFeatures */
+    const withFeatures = (inputFeatures) => ({
+      ...slot,
+      payload: { ...slot.payload, input_features: inputFeatures },
+    });
+    assert.deepEqual(errors(withFeatures(null)), []);
+    assert.deepEqual(
+      errors(withFeatures({ ...features, intervals: { ...intervals, key: null } })),
+      [],
+    );
+    assert.deepEqual(
+      errors(
+        withFeatures({
+          ...features,
+          intervals: { ...intervals, key: { count: 3, entropy_bits: null, cv: null } },
+        }),
+      ),
+      [],
+    );
+    for (const broken of [
+      { ...features, event_times: [1_789_999_380_137] },
+      { ...features, version: 2 },
+      { ...features, keyboard_share: 1.5 },
+      { ...features, events: { ...features.events, key: -1 } },
+      { ...features, events: { ...features.events, keys_pressed: ['a'] } },
+      { ...features, intervals: { ...intervals, double_click: null } },
+      { ...features, intervals: { ...intervals, key: { ...intervals['key'], entropy_bits: 4.5 } } },
+      { ...features, intervals: { ...intervals, key: { ...intervals['key'], count: 0 } } },
+      { ...features, intervals: { ...intervals, key: { ...intervals['key'], buckets: [1, 2] } } },
+      { ...features, intervals: { ...intervals, any: { ...intervals['any'], cv: -0.1 } } },
+    ]) {
+      assert.notDeepEqual(errors(withFeatures(broken)), [], JSON.stringify(broken));
+    }
+    const { input_features: _dropped, ...withoutFeatures } = slot.payload;
+    assert.notDeepEqual(errors({ ...slot, payload: withoutFeatures }), []);
+  });
+
   it('keep slots within their bounds', () => {
     const slot = events.find((event) => event.type === 'slot.closed');
     assert.ok(slot);

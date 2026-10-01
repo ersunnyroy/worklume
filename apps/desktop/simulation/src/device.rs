@@ -1,21 +1,26 @@
 //! A simulated device running the real agent core.
 
+use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Duration;
 
 use tempfile::TempDir;
 use uuid::Uuid;
 use worklume_core::timekeeper::{
-    IdlePolicy, KeepIdle, Outcome, Prompt, Timekeeper, TimekeeperError,
+    IdlePolicy, KeepIdle, Outcome, Prompt, Sensors, Timekeeper, TimekeeperError,
 };
 use worklume_core::tracker::{
     Activity, IdleResolution, InputMethod, TrackerConfig, TrackerError, TrackerState, WorkTarget,
 };
-use worklume_platform::ClockReading;
-use worklume_platform::fake::{FakeClock, FakeIdle, MemorySecretStore};
+use worklume_core::usage::{PrivateWindows, UsageLevel, UsagePolicy};
+use worklume_platform::fake::{
+    FakeBrowser, FakeClock, FakeIdle, FakeInput, FakeWindow, MemorySecretStore,
+};
+use worklume_platform::{BrowserTab, ClockReading, ForegroundApp, InputActivity, SensorError};
 use worklume_storage::{StorageError, Store};
 use worklume_sync::envelope;
 
+use crate::hands::{Hands, InputLedger};
 use crate::server::{FakeServer, Network};
 
 /// 2026-09-21 09:00:00 UTC, a Monday.
@@ -37,6 +42,8 @@ pub struct DeviceConfig {
     pub tick: Duration,
     /// The idle policy the agent starts with.
     pub policy: IdlePolicy,
+    /// The app and URL policy the agent starts with.
+    pub usage: UsagePolicy,
 }
 
 impl Default for DeviceConfig {
@@ -47,8 +54,80 @@ impl Default for DeviceConfig {
                 timeout: Some(Duration::from_mins(5)),
                 keep: KeepIdle::Prompt,
             },
+            usage: UsagePolicy {
+                level: UsageLevel::Paths,
+                window_titles: true,
+                private_windows: PrivateWindows::DomainOnly,
+            },
         }
     }
+}
+
+/// What the member has in front of them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Focus {
+    /// An editor, with a window title.
+    Editor,
+    /// A browser on site `n`, in a private window or not. Its address carries a query and a
+    /// fragment, which must never be kept.
+    Browser { site: u8, private: bool },
+    /// Nothing: the desktop.
+    Desktop,
+    /// An app the OS won't describe (a missing permission).
+    Unreadable,
+}
+
+/// The most detail any usage policy during a run allowed, so the most the server may receive,
+/// and the titles private windows showed, which it must never receive.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UsageAllowance {
+    pub level: UsageLevel,
+    pub window_titles: bool,
+    pub private_sites: bool,
+    pub private_titles: HashSet<String>,
+}
+
+impl Default for UsageAllowance {
+    fn default() -> Self {
+        Self::of(UsagePolicy::OFF)
+    }
+}
+
+impl UsageAllowance {
+    fn of(policy: UsagePolicy) -> Self {
+        Self {
+            level: policy.level,
+            window_titles: policy.window_titles,
+            private_sites: matches!(policy.private_windows, PrivateWindows::DomainOnly),
+            private_titles: HashSet::new(),
+        }
+    }
+
+    fn widen(&mut self, policy: UsagePolicy) {
+        let other = Self::of(policy);
+        self.level = self.level.max(other.level);
+        self.window_titles |= other.window_titles;
+        self.private_sites |= other.private_sites;
+    }
+}
+
+/// The most the server may receive: the most detail any usage policy allowed, and the inputs
+/// the member (or a jiggler) made, which slots may count but never exceed.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Allowance {
+    pub usage: UsageAllowance,
+    pub inputs: InputLedger,
+}
+
+/// What produces input while time passes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Input {
+    /// Nobody: the member is away.
+    Nobody,
+    /// The member works.
+    Person,
+    /// A jiggler moves the pointer every so many milliseconds while the member is away.
+    Jiggler { every_ms: i64 },
 }
 
 /// A failure of the harness itself, or of the agent in a way no scenario asks for.
@@ -79,14 +158,23 @@ struct Agent {
     keeper: Timekeeper,
 }
 
+const EDITOR: &str = "com.microsoft.VSCode";
+const BROWSER: &str = "com.google.Chrome";
+
 /// A simulated device. See the crate documentation.
 pub struct Device {
     clock: Arc<FakeClock>,
     idle: Arc<FakeIdle>,
+    window: Arc<FakeWindow>,
+    browser: Arc<FakeBrowser>,
+    input: Arc<FakeInput>,
+    hands: Hands,
     secrets: MemorySecretStore,
     dir: TempDir,
     config: DeviceConfig,
     policy: IdlePolicy,
+    usage: UsagePolicy,
+    usage_allowance: UsageAllowance,
     agent: Option<Agent>,
     down_since: Option<ClockReading>,
     untracked: Vec<Span>,
@@ -114,13 +202,21 @@ impl Device {
     pub fn new(config: DeviceConfig) -> Result<Self, SimError> {
         let clock = Arc::new(FakeClock::new(START_WALL_MS));
         let idle = Arc::new(FakeIdle::new(Arc::clone(&clock)));
+        let window = Arc::new(FakeWindow::default());
+        window.set(Some(editor()));
         let mut device = Self {
             clock,
             idle,
+            window,
+            browser: Arc::new(FakeBrowser::default()),
+            input: Arc::new(FakeInput::default()),
+            hands: Hands::default(),
             secrets: MemorySecretStore::default(),
             dir: TempDir::new()?,
             config,
             policy: config.policy,
+            usage: config.usage,
+            usage_allowance: UsageAllowance::of(config.usage),
             agent: None,
             down_since: None,
             untracked: Vec::new(),
@@ -199,13 +295,13 @@ impl Device {
 
     // --- The device --------------------------------------------------------------------------
 
-    /// The member works for `duration`: input on every tick.
+    /// The member works for `duration`: input on every tick, typed and pointed unevenly.
     ///
     /// # Errors
     ///
     /// Fails when the agent fails.
     pub fn work(&mut self, duration: Duration) -> Result<(), SimError> {
-        self.pass(duration, true)
+        self.pass(duration, Input::Person)
     }
 
     /// The member is away for `duration`; the device stays awake and the agent keeps ticking.
@@ -214,31 +310,61 @@ impl Device {
     ///
     /// Fails when the agent fails.
     pub fn away(&mut self, duration: Duration) -> Result<(), SimError> {
-        self.pass(duration, false)
+        self.pass(duration, Input::Nobody)
     }
 
-    fn pass(&mut self, duration: Duration, input: bool) -> Result<(), SimError> {
+    /// The member is away for `duration` while a jiggler moves the pointer `every` so often,
+    /// which the OS counts as input.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the agent fails.
+    pub fn jiggle(&mut self, duration: Duration, every: Duration) -> Result<(), SimError> {
+        let every_ms = millis_i64(every).max(1);
+        self.pass(duration, Input::Jiggler { every_ms })
+    }
+
+    fn pass(&mut self, duration: Duration, input: Input) -> Result<(), SimError> {
         let mut left = duration;
+        let mut next_jiggle = match input {
+            Input::Jiggler { every_ms } => self.clock.reading().mono_ms + every_ms,
+            _ => 0,
+        };
         while !left.is_zero() {
             let step = left.min(self.config.tick);
             left -= step;
+            let from = self.clock.reading().mono_ms;
             self.clock.advance(step);
-            if input {
-                self.idle.input();
-            }
-            let activity = if input {
-                Activity {
+            let to = self.clock.reading().mono_ms;
+            let Some(agent) = self.agent.as_mut() else {
+                continue;
+            };
+            let events = match input {
+                Input::Nobody => Vec::new(),
+                Input::Person => self.hands.person(from, to),
+                Input::Jiggler { every_ms } => {
+                    self.hands.jiggler(from, to, &mut next_jiggle, every_ms)
+                }
+            };
+            let activity = match input {
+                Input::Person => Activity {
                     active_ms: millis_u64(step) * 3 / 4,
                     keyboard_ms: Some(millis_u64(step) / 2),
                     mouse_ms: Some(millis_u64(step) / 4),
-                }
-            } else {
-                Activity::NONE
+                },
+                _ if events.is_empty() => Activity::NONE,
+                _ => Activity {
+                    active_ms: 1_000.min(millis_u64(step)),
+                    keyboard_ms: Some(0),
+                    mouse_ms: Some(1_000.min(millis_u64(step))),
+                },
             };
-            if let Some(agent) = self.agent.as_mut() {
-                let outcome = agent.keeper.tick(activity)?;
-                self.record(outcome);
+            if input == Input::Person || !events.is_empty() {
+                self.idle.input();
             }
+            self.input.push(events);
+            let outcome = agent.keeper.tick(activity)?;
+            self.record(outcome);
         }
         Ok(())
     }
@@ -319,13 +445,23 @@ impl Device {
     fn launch(&mut self) -> Result<(), SimError> {
         let (store, _) = Store::open(self.dir.path(), &self.secrets)?;
         let store = Arc::new(store);
-        let (keeper, recovery) = Timekeeper::open(
+        // A new agent's input reader starts empty.
+        drop(self.input.drain());
+        let sensors = Sensors {
+            clock: Arc::clone(&self.clock) as _,
+            idle: Arc::clone(&self.idle) as _,
+            window: Arc::clone(&self.window) as _,
+            browser: Arc::clone(&self.browser) as _,
+            input: Arc::clone(&self.input) as _,
+        };
+        let (mut keeper, recovery) = Timekeeper::open(
             Arc::clone(&store),
             TrackerConfig::new(InputMethod::Hooks),
-            Arc::clone(&self.clock) as _,
-            Arc::clone(&self.idle) as _,
+            sensors,
             self.policy,
         )?;
+        // The configuration is applied at every launch (E09-S06).
+        keeper.set_usage_policy(self.usage);
         let now = self.clock.reading();
         if let Some(down) = self.down_since.take()
             && down.boot_id == now.boot_id
@@ -422,6 +558,67 @@ impl Device {
             agent.keeper.set_policy(policy);
         }
         self.note(format!("policy {policy:?}"));
+    }
+
+    /// Replaces the app and URL policy, as a config update would (E09-S06).
+    pub fn set_usage_policy(&mut self, policy: UsagePolicy) {
+        self.usage = policy;
+        self.usage_allowance.widen(policy);
+        if let Some(agent) = self.agent.as_mut() {
+            agent.keeper.set_usage_policy(policy);
+        }
+        self.note(format!("usage policy {policy:?}"));
+    }
+
+    /// The most the server may receive after this run so far.
+    #[must_use]
+    pub fn allowance(&self) -> Allowance {
+        Allowance {
+            usage: self.usage_allowance.clone(),
+            inputs: self.hands.ledger(),
+        }
+    }
+
+    /// The inputs made so far.
+    #[must_use]
+    pub const fn inputs(&self) -> InputLedger {
+        self.hands.ledger()
+    }
+
+    /// Puts something else in front of the member.
+    pub fn focus(&mut self, focus: Focus) {
+        self.window.set_error(None);
+        match focus {
+            Focus::Editor => self.window.set(Some(editor())),
+            Focus::Browser { site, private } => {
+                let title = if private {
+                    format!("Private: site {site} - Google Chrome")
+                } else {
+                    format!("Site {site} - Google Chrome")
+                };
+                if private {
+                    self.usage_allowance.private_titles.insert(title.clone());
+                }
+                self.window.set(Some(ForegroundApp {
+                    identifier: BROWSER.to_owned(),
+                    name: "Google Chrome".to_owned(),
+                    title: Some(title),
+                }));
+                self.browser.set(
+                    BROWSER,
+                    Some(BrowserTab {
+                        browser: "Chrome".to_owned(),
+                        url: format!(
+                            "https://app.site{site}.example.co.uk/page/{site}?session=secret#top"
+                        ),
+                        private,
+                    }),
+                );
+            }
+            Focus::Desktop => self.window.set(None),
+            Focus::Unreadable => self.window.set_error(Some(SensorError::PermissionDenied)),
+        }
+        self.note(format!("focus {focus:?}"));
     }
 
     /// The member's action: done, refused (`false`), or failed.
@@ -528,6 +725,14 @@ impl Device {
         self.network.set_online(true);
         self.network.lose_responses(0);
         self.sync()
+    }
+}
+
+fn editor() -> ForegroundApp {
+    ForegroundApp {
+        identifier: EDITOR.to_owned(),
+        name: "Visual Studio Code".to_owned(),
+        title: Some("main.rs — worklume".to_owned()),
     }
 }
 

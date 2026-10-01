@@ -5,8 +5,9 @@ use std::time::Duration;
 
 use worklume_core::timekeeper::{IdlePolicy, KeepIdle};
 use worklume_core::tracker::IdleResolution;
+use worklume_core::usage::UsagePolicy;
 
-use crate::device::{Device, DeviceConfig, SimError};
+use crate::device::{Device, DeviceConfig, Focus, SimError};
 use crate::timeline::{TimelineCheck, check};
 
 /// The member's answer to the idle question.
@@ -38,6 +39,11 @@ pub enum Step {
     Work(Duration),
     /// The member is away; the device stays awake.
     Away(Duration),
+    /// The member is away and a jiggler moves the pointer `every` so often.
+    Jiggle {
+        duration: Duration,
+        every: Duration,
+    },
     /// The device sleeps.
     Sleep(Duration),
     /// Someone moves the wall clock by this many seconds.
@@ -54,6 +60,10 @@ pub enum Step {
     LoseResponses(u8),
     /// The organization's idle policy changes.
     Policy(IdlePolicy),
+    /// The organization's app and URL policy changes.
+    UsagePolicy(UsagePolicy),
+    /// Something else comes to the front.
+    Focus(Focus),
 }
 
 impl fmt::Display for Step {
@@ -68,6 +78,12 @@ impl fmt::Display for Step {
             Self::Resume => f.write_str("resume"),
             Self::Work(duration) => write!(f, "work {}", seconds(*duration)),
             Self::Away(duration) => write!(f, "away {}", seconds(*duration)),
+            Self::Jiggle { duration, every } => write!(
+                f,
+                "away {}, a jiggler moving the mouse every {}",
+                seconds(*duration),
+                seconds(*every)
+            ),
             Self::Sleep(duration) => write!(f, "sleep {}", seconds(*duration)),
             Self::ShiftClock(delta) => write!(f, "move the clock by {delta} s"),
             Self::Reboot(downtime) => write!(f, "reboot, off {}", seconds(*downtime)),
@@ -88,6 +104,12 @@ impl fmt::Display for Step {
                     write!(f, "policy: never keep after {}", seconds(timeout))
                 }
             },
+            Self::UsagePolicy(policy) => write!(
+                f,
+                "usage policy: {:?}, titles {}, private windows {:?}",
+                policy.level, policy.window_titles, policy.private_windows
+            ),
+            Self::Focus(focus) => write!(f, "focus {focus:?}"),
         }
     }
 }
@@ -114,6 +136,7 @@ impl Device {
             Step::Resume => drop(self.resume()?),
             Step::Work(duration) => self.work(duration)?,
             Step::Away(duration) => self.away(duration)?,
+            Step::Jiggle { duration, every } => self.jiggle(duration, every)?,
             Step::Sleep(duration) => self.sleep(duration),
             Step::ShiftClock(delta) => self.shift_clock(delta),
             Step::Reboot(downtime) => self.reboot(downtime)?,
@@ -123,6 +146,8 @@ impl Device {
             Step::Online => self.network().set_online(true),
             Step::LoseResponses(count) => self.network().lose_responses(u32::from(count)),
             Step::Policy(policy) => self.set_policy(policy),
+            Step::UsagePolicy(policy) => self.set_usage_policy(policy),
+            Step::Focus(focus) => self.focus(focus),
         }
         self.sync()
     }
@@ -195,7 +220,11 @@ pub fn run(steps: &[Step], config: DeviceConfig) -> Result<Report, SimError> {
 }
 
 fn report(steps: &[Step], device: &Device) -> Result<Report, SimError> {
-    let timeline = check(device.server().events(), device.untracked());
+    let timeline = check(
+        device.server().events(),
+        device.untracked(),
+        &device.allowance(),
+    );
     let mut problems: Vec<String> = device.server().problems().to_vec();
     let left = device.outbox_len()?;
     if left > 0 {

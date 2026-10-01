@@ -13,7 +13,8 @@ use std::time::Duration;
 
 use proptest::prelude::*;
 use worklume_core::timekeeper::{IdlePolicy, KeepIdle};
-use worklume_simulation::{Answer, DeviceConfig, Step, run};
+use worklume_core::usage::{PrivateWindows, UsageLevel, UsagePolicy};
+use worklume_simulation::{Answer, DeviceConfig, Focus, Step, run};
 
 fn seconds(range: std::ops::RangeInclusive<u64>) -> impl Strategy<Value = Duration> {
     range.prop_map(Duration::from_secs)
@@ -32,6 +33,36 @@ fn policy() -> impl Strategy<Value = IdlePolicy> {
         ],
     )
         .prop_map(|(timeout, keep)| IdlePolicy { timeout, keep })
+}
+
+fn usage_policy() -> impl Strategy<Value = UsagePolicy> {
+    (
+        prop_oneof![
+            Just(UsageLevel::Off),
+            Just(UsageLevel::Apps),
+            Just(UsageLevel::Domains),
+            Just(UsageLevel::Paths)
+        ],
+        any::<bool>(),
+        prop_oneof![
+            Just(PrivateWindows::DomainOnly),
+            Just(PrivateWindows::Nothing)
+        ],
+    )
+        .prop_map(|(level, window_titles, private_windows)| UsagePolicy {
+            level,
+            window_titles,
+            private_windows,
+        })
+}
+
+fn focus() -> impl Strategy<Value = Focus> {
+    prop_oneof![
+        3 => Just(Focus::Editor),
+        4 => (1_u8..=5, any::<bool>()).prop_map(|(site, private)| Focus::Browser { site, private }),
+        1 => Just(Focus::Desktop),
+        1 => Just(Focus::Unreadable),
+    ]
 }
 
 fn answer() -> impl Strategy<Value = Answer> {
@@ -54,6 +85,8 @@ fn step() -> impl Strategy<Value = Step> {
         1 => Just(Step::Resume),
         6 => seconds(1..=1_200).prop_map(Step::Work),
         4 => seconds(1..=1_200).prop_map(Step::Away),
+        1 => (seconds(1..=1_200), seconds(1..=90))
+            .prop_map(|(duration, every)| Step::Jiggle { duration, every }),
         2 => seconds(1..=10_800).prop_map(Step::Sleep),
         1 => (-7_200_i64..=7_200).prop_map(Step::ShiftClock),
         1 => seconds(10..=600).prop_map(Step::Reboot),
@@ -63,6 +96,8 @@ fn step() -> impl Strategy<Value = Step> {
         1 => Just(Step::Online),
         1 => (1_u8..=3).prop_map(Step::LoseResponses),
         1 => policy().prop_map(Step::Policy),
+        1 => usage_policy().prop_map(Step::UsagePolicy),
+        4 => focus().prop_map(Step::Focus),
     ]
 }
 
@@ -83,10 +118,12 @@ proptest! {
     fn every_script_keeps_the_invariants(
         steps in prop::collection::vec(step(), 1..40),
         policy in policy(),
+        usage in usage_policy(),
     ) {
         let config = DeviceConfig {
             tick: Duration::from_secs(5),
             policy,
+            usage,
         };
         let report = run(&steps, config).unwrap();
         prop_assert!(report.is_clean(), "{}", report);

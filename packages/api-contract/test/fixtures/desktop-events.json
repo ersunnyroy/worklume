@@ -28,6 +28,43 @@
         "partial_slot"
       ],
       "idle_seconds": 0,
+      "input_features": {
+        "events": {
+          "click": 60,
+          "key": 1260,
+          "pointer": 84,
+          "scroll": 38
+        },
+        "intervals": {
+          "any": {
+            "count": 1441,
+            "cv": 0.415,
+            "entropy_bits": 1.576
+          },
+          "click": {
+            "count": 59,
+            "cv": 0.041,
+            "entropy_bits": 0.124
+          },
+          "key": {
+            "count": 1259,
+            "cv": 0.31,
+            "entropy_bits": 1.141
+          },
+          "pointer": {
+            "count": 83,
+            "cv": 0.0,
+            "entropy_bits": 0.0
+          },
+          "scroll": {
+            "count": 37,
+            "cv": 0.054,
+            "entropy_bits": 0.179
+          }
+        },
+        "keyboard_share": 0.874,
+        "version": 1
+      },
       "input_method": "hooks",
       "keyboard_seconds": 60,
       "mouse_seconds": 24,
@@ -46,36 +83,89 @@
     "event_id": "00000000-0000-7000-8000-000000000005",
     "mono_time": {
       "boot_id": "4c1e0f7a-boot",
-      "ms": 7320000
+      "ms": 7620000
     },
     "payload": {
-      "time_entry_id": "00000000-0000-7000-8000-000000000001"
+      "apps": [
+        {
+          "identifier": "com.microsoft.VSCode",
+          "name": "Visual Studio Code",
+          "seconds": 90,
+          "title": "main.rs — worklume"
+        },
+        {
+          "identifier": "com.google.Chrome",
+          "name": "Google Chrome",
+          "seconds": 30,
+          "title": null
+        }
+      ],
+      "slot_id": "00000000-0000-7000-8000-000000000004",
+      "slot_start": "2026-09-21T14:00:00Z"
     },
     "seq": 3,
-    "type": "idle.detected",
-    "wall_time": "2026-09-21T14:05:00Z"
+    "type": "app_usage.batch",
+    "wall_time": "2026-09-21T14:10:00Z"
   },
   {
     "clock_offset_ms": null,
     "event_id": "00000000-0000-7000-8000-000000000006",
     "mono_time": {
       "boot_id": "4c1e0f7a-boot",
+      "ms": 7620000
+    },
+    "payload": {
+      "sites": [
+        {
+          "browser": "chrome",
+          "domain": "github.com",
+          "path": "/acme/api/pull/7",
+          "private_window": false,
+          "seconds": 30
+        }
+      ],
+      "slot_id": "00000000-0000-7000-8000-000000000004",
+      "slot_start": "2026-09-21T14:00:00Z"
+    },
+    "seq": 4,
+    "type": "url_usage.batch",
+    "wall_time": "2026-09-21T14:10:00Z"
+  },
+  {
+    "clock_offset_ms": null,
+    "event_id": "00000000-0000-7000-8000-000000000007",
+    "mono_time": {
+      "boot_id": "4c1e0f7a-boot",
+      "ms": 7320000
+    },
+    "payload": {
+      "time_entry_id": "00000000-0000-7000-8000-000000000001"
+    },
+    "seq": 5,
+    "type": "idle.detected",
+    "wall_time": "2026-09-21T14:05:00Z"
+  },
+  {
+    "clock_offset_ms": null,
+    "event_id": "00000000-0000-7000-8000-000000000008",
+    "mono_time": {
+      "boot_id": "4c1e0f7a-boot",
       "ms": 7650000
     },
     "payload": {
       "decided_by": "member",
-      "idle_period_id": "00000000-0000-7000-8000-000000000005",
-      "reassigned_project_id": "00000000-0000-7000-8000-000000000007",
+      "idle_period_id": "00000000-0000-7000-8000-000000000007",
+      "reassigned_project_id": "00000000-0000-7000-8000-000000000009",
       "resolution": "reassign",
       "time_entry_id": "00000000-0000-7000-8000-000000000001"
     },
-    "seq": 4,
+    "seq": 6,
     "type": "idle.resolved",
     "wall_time": "2026-09-21T14:10:30Z"
   },
   {
     "clock_offset_ms": null,
-    "event_id": "00000000-0000-7000-8000-000000000008",
+    "event_id": "00000000-0000-7000-8000-00000000000a",
     "mono_time": {
       "boot_id": "4c1e0f7a-boot",
       "ms": 7710000
@@ -84,22 +174,8 @@
       "reason": "break",
       "time_entry_id": "00000000-0000-7000-8000-000000000001"
     },
-    "seq": 5,
+    "seq": 7,
     "type": "timer.stopped",
-    "wall_time": "2026-09-21T14:11:30Z"
-  },
-  {
-    "clock_offset_ms": null,
-    "event_id": "00000000-0000-7000-8000-000000000009",
-    "mono_time": {
-      "boot_id": "4c1e0f7a-boot",
-      "ms": 7710000
-    },
-    "payload": {
-      "break_policy_id": "00000000-0000-7000-8000-00000000000a"
-    },
-    "seq": 6,
-    "type": "break.started",
     "wall_time": "2026-09-21T14:11:30Z"
   },
   {
@@ -107,18 +183,32 @@
     "event_id": "00000000-0000-7000-8000-00000000000b",
     "mono_time": {
       "boot_id": "4c1e0f7a-boot",
+      "ms": 7710000
+    },
+    "payload": {
+      "break_policy_id": "00000000-0000-7000-8000-00000000000c"
+    },
+    "seq": 8,
+    "type": "break.started",
+    "wall_time": "2026-09-21T14:11:30Z"
+  },
+  {
+    "clock_offset_ms": null,
+    "event_id": "00000000-0000-7000-8000-00000000000d",
+    "mono_time": {
+      "boot_id": "4c1e0f7a-boot",
       "ms": 8010000
     },
     "payload": {
-      "break_id": "00000000-0000-7000-8000-000000000009"
+      "break_id": "00000000-0000-7000-8000-00000000000b"
     },
-    "seq": 7,
+    "seq": 9,
     "type": "break.ended",
     "wall_time": "2026-09-21T14:16:30Z"
   },
   {
     "clock_offset_ms": null,
-    "event_id": "00000000-0000-7000-8000-00000000000c",
+    "event_id": "00000000-0000-7000-8000-00000000000e",
     "mono_time": {
       "boot_id": "4c1e0f7a-boot",
       "ms": 8010000
@@ -128,28 +218,28 @@
       "task_id": "00000000-0000-7000-8000-000000000003",
       "trigger": "break_end"
     },
-    "seq": 8,
+    "seq": 10,
     "type": "timer.started",
     "wall_time": "2026-09-21T14:16:30Z"
   },
   {
     "clock_offset_ms": null,
-    "event_id": "00000000-0000-7000-8000-00000000000d",
+    "event_id": "00000000-0000-7000-8000-00000000000f",
     "mono_time": {
       "boot_id": "4c1e0f7a-boot",
       "ms": 8055000
     },
     "payload": {
       "reason": "user",
-      "time_entry_id": "00000000-0000-7000-8000-00000000000c"
+      "time_entry_id": "00000000-0000-7000-8000-00000000000e"
     },
-    "seq": 9,
+    "seq": 11,
     "type": "timer.stopped",
     "wall_time": "2026-09-21T14:17:15Z"
   },
   {
     "clock_offset_ms": null,
-    "event_id": "00000000-0000-7000-8000-00000000000e",
+    "event_id": "00000000-0000-7000-8000-000000000010",
     "mono_time": {
       "boot_id": "4c1e0f7a-boot",
       "ms": 8220000
@@ -160,6 +250,43 @@
         "partial_slot"
       ],
       "idle_seconds": 30,
+      "input_features": {
+        "events": {
+          "click": 15,
+          "key": 315,
+          "pointer": 21,
+          "scroll": 9
+        },
+        "intervals": {
+          "any": {
+            "count": 358,
+            "cv": 0.408,
+            "entropy_bits": 1.569
+          },
+          "click": {
+            "count": 13,
+            "cv": 0.0,
+            "entropy_bits": 0.0
+          },
+          "key": {
+            "count": 313,
+            "cv": 0.305,
+            "entropy_bits": 1.145
+          },
+          "pointer": {
+            "count": 19,
+            "cv": 0.0,
+            "entropy_bits": 0.0
+          },
+          "scroll": {
+            "count": 7,
+            "cv": 0.0,
+            "entropy_bits": 0.0
+          }
+        },
+        "keyboard_share": 0.875,
+        "version": 1
+      },
       "input_method": "hooks",
       "keyboard_seconds": 52,
       "mouse_seconds": 21,
@@ -169,7 +296,7 @@
       "time_entry_id": "00000000-0000-7000-8000-000000000001",
       "tracked_seconds": 135
     },
-    "seq": 10,
+    "seq": 12,
     "type": "slot.closed",
     "wall_time": "2026-09-21T14:20:00Z"
   }
