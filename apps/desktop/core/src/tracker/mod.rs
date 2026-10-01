@@ -18,6 +18,10 @@
 //! **Restarts.** [`Tracker::open`] restores the last snapshot. If time was counting, the entry
 //! is closed at the snapshot and a new one opens now: time between the two is unaccounted, and
 //! the timer carries on.
+//!
+//! **Reboots.** A new boot re-anchors derived time to the wall clock, but never before the last
+//! accounted moment, so no 10-minute window comes around twice. Open slots stay open across the
+//! reboot: if the new boot lands in the same window, it adds to the same slot.
 
 mod events;
 mod slots;
@@ -32,7 +36,8 @@ use worklume_storage::{
 
 pub use slots::{Activity, InputMethod, SLOT_MS};
 pub use state::{
-    Action, Entry, IdlePeriod, IdleResolution, PauseReason, StateName, TrackerState, WorkTarget,
+    Action, DecidedBy, Entry, IdlePeriod, IdleResolution, PauseReason, StateName, TrackerState,
+    WorkTarget,
 };
 
 use events::{StartTrigger, StopReason};
@@ -122,15 +127,23 @@ impl Core {
     /// moved away from derived time.
     fn observe(&mut self, now: &Timestamp, config: &TrackerConfig) -> (Moment, bool, bool) {
         let raw = Moment::from_timestamp(now);
+        // A monotonic clock that went backwards has restarted, whatever the boot ID says.
         let rebooted = self
             .anchor
             .as_ref()
-            .is_some_and(|anchor| anchor.boot_id != raw.boot_id);
+            .is_some_and(|anchor| anchor.boot_id != raw.boot_id || raw.mono_ms < anchor.mono_ms);
         let anchor = match &self.anchor {
             Some(anchor) if !rebooted => anchor.clone(),
             _ => {
-                self.anchor = Some(raw.clone());
-                raw.clone()
+                // A new boot anchors to the device's wall clock, but never before time already
+                // accounted, so a clock set back while the device was off cannot bring a
+                // 10-minute window around twice.
+                let mut anchor = raw.clone();
+                if let Some(last) = &self.last_tick {
+                    anchor.wall_ms = anchor.wall_ms.max(last.wall_ms);
+                }
+                self.anchor = Some(anchor.clone());
+                anchor
             }
         };
         let elapsed = (raw.mono_ms - anchor.mono_ms).max(0);
@@ -155,10 +168,9 @@ impl Core {
     ) -> Result<Moment, TrackerError> {
         let (current, rebooted, jumped) = self.observe(now, config);
         let last = self.last_tick.take();
-        if rebooted {
-            // Time cannot be measured across a reboot; recovery handles the timer itself.
-            self.slots.close_all(config.input_method, out)?;
-        } else if let (Some(last), Some(entry)) = (last, self.state.entry().cloned()) {
+        // Time cannot be measured across a reboot; recovery handles the timer itself. Open
+        // slots stay open: the new boot may carry on in the same window.
+        if !rebooted && let (Some(last), Some(entry)) = (last, self.state.entry().cloned()) {
             let elapsed = u64::try_from(current.mono_ms - last.mono_ms).unwrap_or(0);
             let max_gap = u64::try_from(config.max_tick_gap.as_millis()).unwrap_or(u64::MAX);
             if elapsed > max_gap {
@@ -268,11 +280,12 @@ impl Tracker {
         let restored = snapshot_id.is_some();
 
         let mut out = Vec::new();
-        let last = core.last_tick.take();
+        // Observed while the last tick is known, which a new boot's anchor must not precede.
         let (current, rebooted, _) = core.observe(now, &config);
+        let last = core.last_tick.take();
         let resumed_tracking = core.state.is_tracking() && last.is_some();
         let unaccounted_ms = last.as_ref().and_then(|last| {
-            (last.boot_id == current.boot_id)
+            (!rebooted && last.boot_id == current.boot_id)
                 .then(|| u64::try_from(current.mono_ms - last.mono_ms).unwrap_or(0))
         });
         if let Some(last) = &last
@@ -286,12 +299,8 @@ impl Tracker {
                 &mut out,
             )?;
         }
-        if rebooted {
-            core.slots.close_all(config.input_method, &mut out)?;
-        } else {
-            core.slots
-                .close_due(current.wall_ms, config.input_method, &mut out)?;
-        }
+        core.slots
+            .close_due(current.wall_ms, config.input_method, &mut out)?;
         core.last_tick = Some(current.clone());
 
         let mut tracker = Self {
@@ -372,8 +381,8 @@ impl Tracker {
     ///
     /// # Errors
     ///
-    /// Fails while idle time awaits a decision, on a break or when already stopped, or when the
-    /// store fails.
+    /// Fails while idle time awaits a decision (the `stop` resolution stops the timer then), on
+    /// a break or when already stopped, or when the store fails.
     pub fn stop(&mut self, now: &Timestamp) -> Result<(), TrackerError> {
         self.run(now, Activity::NONE, |core, at, out| {
             match &core.state {
@@ -384,7 +393,7 @@ impl Tracker {
                         at,
                     )?);
                 }
-                TrackerState::Paused { .. } => {}
+                TrackerState::Paused { idle: None, .. } => {}
                 _ => return Err(invalid(&core.state, Action::Stop)),
             }
             core.state = TrackerState::Stopped;
@@ -439,8 +448,9 @@ impl Tracker {
         })
     }
 
-    /// Applies the member's decision about pending idle time. The server adjusts the time
-    /// entries; locally the timer keeps running, or stops for [`IdleResolution::Stop`].
+    /// Applies a decision about pending idle time. The server adjusts the time entries. Locally
+    /// a running timer keeps running and a paused one stays paused, except that
+    /// [`IdleResolution::Stop`] stops it.
     ///
     /// # Errors
     ///
@@ -448,53 +458,54 @@ impl Tracker {
     pub fn resolve_idle(
         &mut self,
         resolution: IdleResolution,
+        decided_by: DecidedBy,
         now: &Timestamp,
     ) -> Result<(), TrackerError> {
         self.run(now, Activity::NONE, |core, at, out| {
-            let TrackerState::IdlePending { entry, idle } = &core.state else {
+            let Some(idle) = core.state.pending_idle() else {
                 return Err(invalid(&core.state, Action::ResolveIdle));
             };
-            out.push(events::idle_resolved(
-                idle.idle_period_id,
-                idle.time_entry_id,
-                resolution,
-                at,
-            )?);
-            core.state = match resolution {
-                IdleResolution::Stop => TrackerState::Stopped,
-                _ => TrackerState::Running {
+            out.push(events::idle_resolved(idle, resolution, decided_by, at)?);
+            core.state = match (resolution, &core.state) {
+                (IdleResolution::Stop, _) => TrackerState::Stopped,
+                (_, TrackerState::IdlePending { entry, .. }) => TrackerState::Running {
                     entry: entry.clone(),
                 },
+                (_, TrackerState::Paused { target, reason, .. }) => TrackerState::Paused {
+                    target: *target,
+                    reason: *reason,
+                    idle: None,
+                },
+                (_, other) => other.clone(),
             };
             Ok(())
         })
     }
 
-    /// Pauses for sleep or a locked session. Safe to repeat: ignored unless the timer is running.
+    /// Pauses for sleep or a locked session, closing the entry. Idle time awaiting a decision
+    /// keeps waiting, and its period ends with the entry. Safe to repeat: ignored unless time
+    /// counts.
     ///
     /// # Errors
     ///
-    /// Fails while idle time awaits a decision (E09-S08 resolves it first), or when the store
-    /// fails.
+    /// Fails when the store fails.
     pub fn pause(&mut self, reason: PauseReason, now: &Timestamp) -> Result<(), TrackerError> {
         self.run(now, Activity::NONE, |core, at, out| {
-            match &core.state {
-                TrackerState::Running { entry } => {
-                    out.push(events::timer_stopped(
-                        entry.time_entry_id,
-                        StopReason::Pause(reason),
-                        at,
-                    )?);
-                    core.state = TrackerState::Paused {
-                        target: entry.target,
-                        reason,
-                    };
-                }
-                TrackerState::IdlePending { .. } => {
-                    return Err(invalid(&core.state, Action::Pause));
-                }
-                _ => {}
-            }
+            let (entry, idle) = match &core.state {
+                TrackerState::Running { entry } => (entry, None),
+                TrackerState::IdlePending { entry, idle } => (entry, Some(idle.clone())),
+                _ => return Ok(()),
+            };
+            out.push(events::timer_stopped(
+                entry.time_entry_id,
+                StopReason::Pause(reason),
+                at,
+            )?);
+            core.state = TrackerState::Paused {
+                target: entry.target,
+                reason,
+                idle,
+            };
             Ok(())
         })
     }
@@ -504,13 +515,21 @@ impl Tracker {
     ///
     /// # Errors
     ///
-    /// Fails when the store fails.
+    /// Fails while idle time from before the pause awaits a decision, or when the store fails.
     pub fn resume(&mut self, now: &Timestamp) -> Result<(), TrackerError> {
         self.run(now, Activity::NONE, |core, at, out| {
-            if let TrackerState::Paused { target, .. } = &core.state {
-                let entry = new_entry(*target, at);
-                out.push(events::timer_started(&entry, StartTrigger::Resume)?);
-                core.state = TrackerState::Running { entry };
+            match &core.state {
+                TrackerState::Paused {
+                    target, idle: None, ..
+                } => {
+                    let entry = new_entry(*target, at);
+                    out.push(events::timer_started(&entry, StartTrigger::Resume)?);
+                    core.state = TrackerState::Running { entry };
+                }
+                TrackerState::Paused { idle: Some(_), .. } => {
+                    return Err(invalid(&core.state, Action::Resume));
+                }
+                _ => {}
             }
             Ok(())
         })

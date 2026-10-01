@@ -10,7 +10,7 @@ mod common;
 
 use common::{Harness, START_WALL_MS, seconds, target, uuid};
 use serde_json::json;
-use worklume_core::tracker::{Activity, IdleResolution, Tracker, TrackerState};
+use worklume_core::tracker::{Activity, DecidedBy, IdleResolution, Tracker, TrackerState};
 use worklume_storage::OutboxEvent;
 
 fn tick_with(harness: &mut Harness, tracker: &mut Tracker, seconds: i64, activity: Activity) {
@@ -106,7 +106,11 @@ fn activity_and_idle_are_counted_per_slot() {
     tracker.idle_detected(&since, &harness.clock.now()).unwrap();
     tick_with(&mut harness, &mut tracker, 60, Activity::NONE);
     tracker
-        .resolve_idle(IdleResolution::Keep, &harness.clock.now())
+        .resolve_idle(
+            IdleResolution::Keep,
+            DecidedBy::Member,
+            &harness.clock.now(),
+        )
         .unwrap();
     tick_with(&mut harness, &mut tracker, 1, Activity::NONE);
 

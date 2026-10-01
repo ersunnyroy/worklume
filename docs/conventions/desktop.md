@@ -225,21 +225,23 @@ E09-S11. The code is in `src-tauri/src/watchdog.rs`, `src-tauri/src/diagnostics/
 
 ## Tracker
 
-E09-S04: `worklume-core::tracker`, a state machine the agent's loop will drive. The loop, which
-ticks every second, and the one-store-per-organization setup arrive with sign-in (E09-S03) and
-the agent UI (E09-S09). Until then the tracker runs in tests against a controllable clock.
+E09-S04: `worklume-core::tracker`, the timer's state machine. The timekeeper (next section)
+drives it on the device's clock. The loop that ticks every second, and the
+one-store-per-organization setup, arrive with sign-in (E09-S03) and the agent UI (E09-S09).
+Until then both run in tests against controllable clocks.
 
 **States.** Stopped, running, idle-pending, paused and on-break.
 
 - `start`, `switch` and `stop` are the member's timer controls.
-- `idle_detected` and `resolve_idle` (keep, discard, reassign or stop) record idle time.
-- `pause` and `resume` handle sleep or a locked session, and are safe to repeat because power
-  events arrive more than once.
+- `idle_detected` and `resolve_idle` (keep, discard, reassign or stop, decided by the member or
+  by the policy) record idle time.
+- `pause` and `resume` handle sleep or a locked session, and are safe to repeat. A pause while
+  idle time awaits a decision keeps the decision waiting: the idle period ends with the entry,
+  and `resume` and `stop` are refused until the decision.
 - `start_break` and `end_break` handle breaks.
 - `tick(now, activity)` accounts time.
 - Refused actions change nothing and write nothing. `tests/transitions.rs` holds the full table.
-- Idle detection, the idle dialog, sleep and wake, and the real OS clock are E09-S08. Here they
-  are inputs.
+- The tracker takes idle detection and sleep as inputs; the timekeeper decides when they happen.
 
 **Journal first.**
 
@@ -267,7 +269,10 @@ the agent UI (E09-S09). Until then the tracker runs in tests against a controlla
 - On restart, `Tracker::open` restores the snapshot. If time was counting, the entry closes at
   the snapshot (reason `agent_restart`), a new one opens (trigger `restart`) and the timer
   carries on. `Recovery` reports the unaccounted time.
-- After a reboot, slots from the old boot close at once and are dated in that boot.
+- After a reboot, derived time re-anchors to the wall clock, but never before the last
+  accounted moment, so no 10-minute window comes around twice, even when the clock was set back
+  while the device was off (the slot is flagged `clock_adjusted`). Open slots stay open: if the
+  new boot lands in the same window, it adds to the same slot, dated in the new boot.
 
 **Slots.**
 
@@ -290,15 +295,182 @@ the agent UI (E09-S09). Until then the tracker runs in tests against a controlla
 - Every `timer.stopped` stops the server's timer, and every `timer.started` starts it, so a
   paused member shows as not tracking, and stopping while paused sends nothing.
 - Idle resolutions are applied by the server, as `POST /v1/idle-periods/{id}/resolve` would, so
-  a resolution made on the web cannot double-count.
+  a resolution made on the web cannot double-count. `decided_by` says whether the member or the
+  keep-idle policy decided, and the server checks the decision against the member's policy.
+- An idle period covers all tracked time from its start until the decision. When a restart or
+  a gap splits the entry meanwhile, it carries on into the new entry, and a `stop` decision
+  ends whichever entry is open.
 - The server's `timers.stop_reason` needs the agent's reasons: `sleep`, `session_locked`,
   `break`, `gap` and `agent_restart` (E07-S03, E08-S10).
 
 **Test support.**
 
-- `worklume-platform`'s `fake` feature provides `MemorySecretStore`.
+- `worklume-platform`'s `fake` feature provides `MemorySecretStore`, `FakeClock` and `FakeIdle`.
 - `worklume-storage`'s `fault-injection` feature adds `Store::fail_next_writes`.
 - Both are dev-dependency features only; the app never enables them.
+
+## Idle and sleep
+
+E09-S08: `worklume-core::timekeeper` runs the tracker on the device's clock, detects idle time
+and handles sleep. `worklume-platform` provides the `Clock` and `IdleSource` traits.
+
+**One timeline.** Every timer action goes through the `Timekeeper`. Before any action it reads
+the clock, handles a sleep that happened since the previous reading, and accounts time up to
+now. A click just after waking therefore lands after the sleep, never before it.
+
+**The clock.** The tracker needs a monotonic clock that keeps counting while the device sleeps:
+wall time is derived from it (anchor plus monotonic delta), and Rust's `Instant` stops during
+sleep on Linux and macOS.
+
+- `OsClock` reads, on each OS, one counter that includes sleep and one that doesn't. Both start
+  at boot, so their difference is exactly the time spent asleep.
+  - Linux: `CLOCK_BOOTTIME` and `CLOCK_MONOTONIC`.
+  - macOS: `CLOCK_MONOTONIC_RAW` and `CLOCK_UPTIME_RAW`.
+  - Windows: `QueryInterruptTime` and `QueryUnbiasedInterruptTime`.
+- Boot IDs:
+  - Linux uses `/proc/sys/kernel/random/boot_id`.
+  - macOS uses `kern.bootsessionuuid`.
+  - Windows documents no boot ID, so the agent keeps one in a volatile key,
+    `HKCU\Software\Worklume\BootSession`. Windows drops volatile keys at sign-out and restart.
+    A sign-out also changes the ID, which only closes open slots early.
+- The tracker also treats a monotonic clock that went backwards as a new boot. That covers a
+  boot ID that failed to change, for example a tampered registry key.
+
+**Sleep comes from the clock, not from power notifications.** The architecture names a
+`PowerEvents` trait for sleep and wake. The agent reads sleep from the clock instead, for four
+reasons:
+
+- The first reading after waking knows how long the sleep lasted.
+- It can't be missed while the agent is busy or restarting.
+- It needs no message loop, D-Bus connection or permission.
+- It works the same on every OS.
+
+`PowerEvents` is still the place for session lock and unlock, which clocks can't see. The
+tracker already supports `pause(SessionLocked)`, and the per-OS stories wire the events.
+
+**Idle.** While the timer runs, inactivity is the time since the last input. It counts at the
+earliest from the last decision about idle time, or from the timer's start. When inactivity
+reaches the timeout, idle time is recorded from where it began. The idle source's adapters come
+with the per-OS input stories (E10-S03, E11-S03, E12-S03, E13-S04). When the source can't say
+(`IdleError`), nothing is detected: unknown is never read as idle.
+
+**Sleep.** The entry closes at the last reading before the sleep (`timer.stopped`, reason
+`sleep`), and the second or so around the sleep isn't tracked. On waking, the member's absence
+is the inactivity before the sleep plus the sleep itself.
+
+- Shorter than the idle timeout: the timer resumes in a new entry.
+- Longer: the timer waits for the member, who is asked once.
+  - Inactivity of a second or more before the sleep, inside the entry, becomes idle time
+    awaiting a decision. Answering it also resumes the timer, unless the answer is `stop`.
+  - Otherwise the only question is whether to resume.
+  - If idle time was already awaiting a decision, that question stands; it is not asked again.
+
+**Keep-idle policy** (`idle.keep`, delivered with the config in E09-S06):
+
+| Policy   | Idle while awake                                | Long absence with a sleep                      |
+| -------- | ----------------------------------------------- | ---------------------------------------------- |
+| `prompt` | Asks the member                                 | Asks about the idle time, or whether to resume |
+| `always` | Kept when input returns, without asking         | Idle kept; asks whether to resume              |
+| `never`  | Discarded, and the timer stops where idle began | The timer stops; nothing is asked              |
+
+- A policy decision sends `idle.resolved` with `decided_by: policy`.
+- A timeout of `None` turns idle detection off. Sleep is still never tracked, and every sleep
+  then resumes on its own.
+- The policy comes from the server and is never hardcoded. `set_policy` applies a new policy
+  from the next call.
+
+**Prompts.** `Timekeeper::prompt()` is the question the idle dialog (E09-S09) shows.
+
+- `Prompt::Idle` offers keep, discard, reassign or stop.
+- `Prompt::Resume` offers resume or stop.
+- Each call's `Outcome` reports a new question, for a notification. A question that outlives a
+  sleep counts as the same question.
+
+**Tested.** The acceptance criterion is that a two-hour sleep tracks no time and asks once at
+most.
+
+- `core/tests/timekeeper.rs` checks it under all three policies, for a member who was working,
+  briefly away or long away before the sleep.
+- Other tests cover short sleeps, answers, clicks just after waking, restarts, policy changes,
+  and failed clock reads and saves.
+- `platform/tests/os_clock.rs` checks the real clocks on each OS in CI.
+- A real sleep can't happen in CI, so sleep detection on real hardware belongs in the release
+  test matrix.
+
+## Simulation harness
+
+E09-S14: `apps/desktop/simulation` (`worklume-simulation`) runs the real agent core on a
+simulated device. Its scripted and generated scenarios check the agent end to end, from the
+store to what the server received.
+
+**The device.** A `Device` runs the real `Timekeeper`, tracker and encrypted store in a
+temporary folder, on `FakeClock`, `FakeIdle` and `MemorySecretStore`. It can:
+
+- work (input every tick), be away, or sleep;
+- have its wall clock moved, or reboot;
+- lose its agent to a crash, including in the middle of a store write (the store's
+  `fault-injection` feature). The watchdog's one-second restart is modelled.
+- go offline, or lose sync answers after the server applied a batch.
+
+It records when it slept or ran no agent, in monotonic time. The member's actions go through
+the timekeeper as the UI's would; actions refused in the current state are logged and skipped,
+like a disabled button.
+
+**The server.** `FakeServer` stores each event once by `event_id`, reports repeats as
+duplicates, and flags a reused ID or a `seq` out of order. The sync engine (E09-S05) doesn't
+exist yet, so `Device::sync` stands in for it: ordered batches of up to 500 events, deleted
+from the outbox only once the server answered. The real engine replaces this when it arrives.
+
+**The checker.** `check` folds what the server stored into entries, idle periods, breaks and
+slots, and reports:
+
+- a `seq` gap, or a repeated event ID;
+- an event whose wall time isn't its boot's monotonic time plus one fixed offset (a clock
+  change leaking into event times);
+- two open entries, a stop for an entry that isn't open, or an entry ending in another boot or
+  before it began;
+- any entry overlapping a sleep or a stretch with no agent;
+- an idle period outside its entry, resolved twice, overlapping another, or ended by a pause
+  with less than a second in it;
+- a break while tracking;
+- a second slot for a window, a slot outside 1–600 s or not on a 10-minute boundary;
+- slots that disagree with the entries by more than a second;
+- anything left open at the end, or events that never reached the server.
+
+`tests/checker.rs` damages a clean day in each of these ways and expects the report, so the
+checker can't pass everything by accident.
+
+**Scenarios** (`tests/scenarios.rs`):
+
+- a working day;
+- a week offline that arrives complete and once, even when answers are lost;
+- a sleep under each keep-idle policy;
+- clock changes;
+- crashes, including one mid-write;
+- a reboot.
+
+**Generated scripts** (`tests/properties.rs`): proptest builds scripts of up to 40 random
+steps under a random idle policy, and shrinks a failure to a short script. The report prints
+the script and a log of what happened. `PROPTEST_CASES` sets the count: 64 locally, 256 in CI.
+10,000 passed before merging.
+
+**What it found.** Three defects that the unit tests had missed, fixed with the harness:
+
+- After a reboot within the same 10-minute window, the tracker sent a second slot for that
+  window. The server's unique key would have refused it.
+- A clock set back while the device was off could repeat windows the same way.
+- A `stop` decision after a restart split the entry left the server's new entry open; the
+  contract now says an idle period spans such splits. Idle time before a sleep could also
+  begin before the entry, giving an empty idle period and a pointless question.
+
+**CI.** The `Desktop simulation (Linux)` job in `ci.yml` runs the harness on every pull request,
+whatever it changes: the scenarios, the checker tests and 256 generated scripts. The Desktop
+workflow runs everything on three OSes when desktop code or the API contract changes.
+
+**Boundaries.** The harness turns on test-only features (the platform fakes and store fault
+injection) as normal dependencies. The crate-boundary rules therefore let nothing depend on it
+except as a dev-dependency. The installers build only the shell's dependency tree, so those
+features never reach the app.
 
 ## Rust tasks in Turborepo
 
@@ -367,9 +539,14 @@ the CLI and the crates together.
 ## Deferred
 
 - Localised tray labels and UI strings: E09-S09 (agent UI).
-- Running the tracker in the app: a loop that ticks every second, one store per organization
-  and device registration opened off the main thread, and logging of best-effort window
-  failures. This arrives after sign-in (E09-S03) with the agent UI (E09-S09).
+- Running the timekeeper in the app: a loop that ticks every second, one store per
+  organization and device registration opened off the main thread, and logging of best-effort
+  window failures. This arrives after sign-in (E09-S03) with the agent UI (E09-S09), which also
+  shows the idle dialog.
+- Idle source adapters, and session lock and unlock through `PowerEvents`: the per-OS input
+  stories (E10-S03, E11-S03, E12-S03, E13-S04).
+- The simulation harness drives the real sync engine and the offline property tests of E08-S10
+  once they exist (E09-S05).
 - A monochrome template tray icon for the macOS menu bar: E10-S07.
 - Code signing, notarisation and the updater: E09-S10 and E10–E13. The updater restarts the
   agent through exit code 75, so the watchdog stays in charge.

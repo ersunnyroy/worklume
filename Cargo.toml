@@ -9,6 +9,7 @@ members = [
   "apps/desktop/platform",
   "apps/desktop/storage",
   "apps/desktop/sync",
+  "apps/desktop/simulation",
 ]
 
 [workspace.package]

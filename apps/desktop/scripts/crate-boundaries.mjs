@@ -11,6 +11,13 @@ export const allowedWorkspaceDependencies = {
   'worklume-core': ['worklume-platform', 'worklume-storage'],
   'worklume-sync': ['worklume-core', 'worklume-platform', 'worklume-storage'],
   'worklume-desktop': ['worklume-core', 'worklume-platform', 'worklume-storage', 'worklume-sync'],
+  // Test support: listed nowhere else, so no crate can depend on it except for its tests.
+  'worklume-simulation': [
+    'worklume-core',
+    'worklume-platform',
+    'worklume-storage',
+    'worklume-sync',
+  ],
 };
 
 /** External crates that only one layer may use directly. */
@@ -22,7 +29,7 @@ export const restrictedCrates = [
   },
   {
     pattern:
-      /^(objc2(-.+)?|block2|core-foundation|core-graphics|windows|windows-sys|x11rb|xcb|zbus|ashpd|atspi|wayland-client|security-framework(-sys)?|dbus(-.+)?|secret-service|keyring|keyring-core|.+-keyring-store)$/,
+      /^(libc|objc2(-.+)?|block2|core-foundation|core-graphics|windows|windows-sys|x11rb|xcb|zbus|ashpd|atspi|wayland-client|security-framework(-sys)?|dbus(-.+)?|secret-service|keyring|keyring-core|.+-keyring-store)$/,
     allowedIn: ['worklume-platform'],
     reason: 'operating-system APIs belong in the platform adapters',
   },

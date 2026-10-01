@@ -43,6 +43,37 @@ describe('checkBoundaries', () => {
     assert.match(violations.join('\n'), /operating-system APIs/);
   });
 
+  it('keeps raw system calls in the platform crate', () => {
+    assert.deepEqual(
+      checkBoundaries(workspace(crate('worklume-platform', [['libc'], ['windows-sys']]))),
+      [],
+    );
+    const violations = checkBoundaries(
+      workspace(crate('worklume-core', [['worklume-platform'], ['worklume-storage'], ['libc']])),
+    );
+    assert.match(violations.join('\n'), /worklume-core may not depend on libc/);
+  });
+
+  it('keeps the simulation harness out of the app', () => {
+    const harness = crate('worklume-simulation', [
+      ['worklume-core'],
+      ['worklume-platform'],
+      ['worklume-storage'],
+      ['worklume-sync'],
+    ]);
+    assert.deepEqual(checkBoundaries(workspace(harness)), []);
+    const withDevDependency = crate('worklume-desktop', [
+      ['tauri'],
+      ['worklume-core'],
+      ['worklume-simulation', 'dev'],
+    ]);
+    assert.deepEqual(checkBoundaries(workspace(harness, withDevDependency)), []);
+    const violations = checkBoundaries(
+      workspace(harness, crate('worklume-desktop', [['tauri'], ['worklume-simulation']])),
+    );
+    assert.match(violations.join('\n'), /worklume-desktop may not depend on worklume-simulation/);
+  });
+
   it('keeps the OS credential store in the platform crate', () => {
     assert.deepEqual(
       checkBoundaries(
