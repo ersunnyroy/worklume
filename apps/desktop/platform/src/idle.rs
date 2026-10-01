@@ -3,8 +3,8 @@
 //! Each OS answers the same question, "how long since the last input?", with no special
 //! permission: `CGEventSourceSecondsSinceLastEventType` on macOS, `GetLastInputInfo` on Windows,
 //! the `XScreenSaver` extension on X11, and `ext-idle-notify-v1` or Mutter's `IdleMonitor` on
-//! Wayland. The adapters arrive with the per-OS input stories (E10-S03, E11-S03, E12-S03 and
-//! E13-S04); until then only the test double implements the trait.
+//! Wayland. X11's arrived with E12-S03 (`linux::X11Idle`); the others come with
+//! E10-S03, E11-S03 and E13-S04.
 
 use std::fmt;
 use std::time::Duration;

@@ -7,6 +7,7 @@
 //! detection. It reaches the OS only through `worklume-platform` traits and persists only
 //! through `worklume-storage`.
 
+pub mod activity;
 pub mod catalog;
 pub mod input;
 pub mod time;

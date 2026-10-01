@@ -1,13 +1,13 @@
 //! Sensors for a platform whose adapter hasn't arrived yet (E10–E13): every reading is
 //! [`IdleError::Unsupported`] or [`SensorError::Unsupported`]. The agent then tracks time
-//! without idle detection, app usage or input features, and reports the capability as missing,
-//! rather than guessing a value.
+//! without idle detection, app usage, input features or lock detection, and reports the
+//! capability as missing, rather than guessing a value.
 
 use std::time::Duration;
 
 use crate::{
     ActiveWindow, BrowserTab, BrowserUrl, ForegroundApp, IdleError, IdleSource, InputActivity,
-    InputEvent, SensorError,
+    InputEvent, SensorError, SessionLock,
 };
 
 /// A sensor that cannot read anything in this build.
@@ -38,11 +38,18 @@ impl InputActivity for Unsupported {
     }
 }
 
+impl SessionLock for Unsupported {
+    fn locked(&self) -> Result<bool, SensorError> {
+        Err(SensorError::Unsupported)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::Unsupported;
     use crate::{
         ActiveWindow, BrowserUrl, ForegroundApp, IdleError, IdleSource, InputActivity, SensorError,
+        SessionLock,
     };
 
     #[test]
@@ -56,5 +63,6 @@ mod tests {
         assert_eq!(Unsupported.foreground(true), Err(SensorError::Unsupported));
         assert_eq!(Unsupported.active_tab(&app), Err(SensorError::Unsupported));
         assert_eq!(Unsupported.drain(), Err(SensorError::Unsupported));
+        assert_eq!(Unsupported.locked(), Err(SensorError::Unsupported));
     }
 }

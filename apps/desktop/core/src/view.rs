@@ -52,7 +52,8 @@ pub struct WorkView {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Question {
     /// Idle time awaits a decision: keep, discard, reassign or stop. When `paused`, the device
-    /// slept meanwhile, and any answer but stop also resumes the timer.
+    /// slept or the session was locked meanwhile, and any answer but stop also resumes the
+    /// timer.
     Idle {
         /// Where inactivity began, in the tracker's wall time.
         since_wall_ms: i64,
@@ -60,7 +61,8 @@ pub enum Question {
         idle_for: Option<Duration>,
         paused: bool,
     },
-    /// The device slept for longer than the idle timeout: resume, or stay stopped.
+    /// The device slept, or the session was locked, for longer than the idle timeout: resume,
+    /// or stay stopped.
     Resume,
 }
 

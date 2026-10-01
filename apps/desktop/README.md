@@ -8,8 +8,10 @@ watchdog that restarts the agent after a crash.
 The app opens its encrypted store (`storage/`) and runs the timekeeper (`core/`) on the device
 clock, ticking every second. The window shows the timer, the project picker and the idle
 question through typed commands and an event behind an IPC allowlist (E09-S09). Projects to
-track arrive with sign-in and the configuration (E09-S03, E09-S06). Until the per-OS adapters
-arrive (E10–E13), idle time, app usage and input read as unsupported.
+track arrive with sign-in and the configuration (E09-S03, E09-S06). On Linux X11 the agent
+measures idle time, input and activity, reads the app in front (E12-S03, E12-S04), and pauses
+while the session is locked.
+Elsewhere, sensors wait for their per-OS adapters (E10–E13) and read as unsupported.
 
 ## Layout
 
@@ -28,7 +30,7 @@ arrive (E10–E13), idle time, app usage and input read as unsupported.
 | `storage/migrations/`              | Local schema migrations, applied in order, append-only                 |
 | `sync/`                            | `worklume-sync`: outbox drain and uploads (E09-S05)                    |
 | `simulation/`                      | `worklume-simulation`: simulated device, fake server, invariant checks |
-| `platform/`                        | `worklume-platform`: OS traits: credentials, clock, idle, window, tab  |
+| `platform/`                        | `worklume-platform`: OS traits and adapters (credentials, clock, X11)  |
 | `scripts/`                         | Crate dependency rules, checked on every lint                          |
 | `src-tauri/icons/`, `icon.svg`     | App icons, generated from `icon.svg`                                   |
 

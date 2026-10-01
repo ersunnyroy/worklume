@@ -71,7 +71,7 @@
     "heading": "You were away",
     "since": "No keyboard or mouse input since {{time}}, {{duration}} ago.",
     "sinceOnly": "No keyboard or mouse input since {{time}}.",
-    "paused": "Your computer slept meanwhile. The timer resumes after you answer, unless you stop it.",
+    "paused": "The timer paused meanwhile, because your computer slept or your screen was locked. It resumes after you answer, unless you stop it.",
     "question": "What should happen to that time?",
     "keep": "Keep it",
     "discard": "Discard it",
@@ -81,7 +81,7 @@
   },
   "resume": {
     "heading": "Welcome back",
-    "body": "Your computer slept for longer than your organization's idle limit, so the timer paused.",
+    "body": "You were away longer than your organization's idle limit, with your computer asleep or your screen locked, so the timer paused.",
     "resume": "Resume timer",
     "stop": "Stay stopped"
   },

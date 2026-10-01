@@ -10,7 +10,7 @@ use zeroize::Zeroizing;
 use crate::{
     ActiveWindow, BrowserTab, BrowserUrl, Clock, ClockError, ClockReading, ForegroundApp,
     IdleError, IdleSource, InputActivity, InputEvent, Secret, SecretStore, SecretStoreError,
-    SecretStoreErrorKind, SensorError,
+    SecretStoreErrorKind, SensorError, SessionLock,
 };
 
 /// A credential store in memory. It can be switched to fail like a locked keychain.
@@ -326,6 +326,34 @@ impl InputActivity for FakeInput {
         match lock(&self.error).clone() {
             Some(error) => Err(error),
             None => Ok(events),
+        }
+    }
+}
+
+/// A session the test locks and unlocks. It can fail like a reader whose service is gone.
+#[derive(Debug, Default)]
+pub struct FakeLock {
+    locked: Mutex<bool>,
+    error: Mutex<Option<SensorError>>,
+}
+
+impl FakeLock {
+    /// Locks or unlocks the session.
+    pub fn set(&self, locked: bool) {
+        *lock(&self.locked) = locked;
+    }
+
+    /// Makes reads fail with `error`, or work again with `None`.
+    pub fn set_error(&self, error: Option<SensorError>) {
+        *lock(&self.error) = error;
+    }
+}
+
+impl SessionLock for FakeLock {
+    fn locked(&self) -> Result<bool, SensorError> {
+        match lock(&self.error).clone() {
+            Some(error) => Err(error),
+            None => Ok(*lock(&self.locked)),
         }
     }
 }

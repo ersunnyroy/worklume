@@ -299,7 +299,7 @@ describe('App', () => {
         }),
       );
       const dialog = screen.getByRole('alertdialog');
-      expect(dialog).toHaveTextContent('Your computer slept meanwhile.');
+      expect(dialog).toHaveTextContent('because your computer slept or your screen was locked');
       // After a reboot the agent can't say how long ago that was.
       expect(dialog).toHaveTextContent(/No keyboard or mouse input since 2:05\sPM\./);
     });

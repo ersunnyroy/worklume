@@ -88,6 +88,7 @@ fn step() -> impl Strategy<Value = Step> {
         1 => (seconds(1..=1_200), seconds(1..=90))
             .prop_map(|(duration, every)| Step::Jiggle { duration, every }),
         2 => seconds(1..=10_800).prop_map(Step::Sleep),
+        2 => seconds(1..=3_600).prop_map(Step::Lock),
         1 => (-7_200_i64..=7_200).prop_map(Step::ShiftClock),
         1 => seconds(10..=600).prop_map(Step::Reboot),
         1 => seconds(1..=90).prop_map(Step::Crash),

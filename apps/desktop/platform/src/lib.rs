@@ -8,8 +8,10 @@
 //!
 //! So far the crate identifies the platform the agent runs on, which decides the adapter, keeps
 //! secrets in the OS credential store, and reads the device's clocks. It also defines the idle
-//! source, the foreground app, the browser tab and input events, whose adapters come with the
-//! per-OS stories; until then [`Unsupported`] stands in for them.
+//! source, the foreground app, the browser tab, input events and the session lock. On Linux,
+//! `linux` reads idle time and input on X11 and the session lock (E12-S03); the other adapters
+//! come with their per-OS stories, and until then [`Unsupported`] stands in for them.
+//! [`DeviceSensors`] picks what this session offers.
 
 mod clock;
 mod detect;
@@ -18,7 +20,11 @@ pub mod fake;
 mod foreground;
 mod idle;
 mod input;
+#[cfg(target_os = "linux")]
+pub mod linux;
 mod secret;
+mod sensors;
+mod session;
 mod unsupported;
 
 pub use clock::{Clock, ClockError, ClockReading, OsClock};
@@ -27,4 +33,6 @@ pub use foreground::{ActiveWindow, BrowserTab, BrowserUrl, ForegroundApp, Sensor
 pub use idle::{IdleError, IdleSource};
 pub use input::{InputActivity, InputEvent, InputKind};
 pub use secret::{OsSecretStore, Secret, SecretStore, SecretStoreError, SecretStoreErrorKind};
+pub use sensors::DeviceSensors;
+pub use session::SessionLock;
 pub use unsupported::Unsupported;
