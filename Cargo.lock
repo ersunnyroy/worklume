@@ -6031,6 +6031,7 @@ dependencies = [
 name = "worklume-desktop"
 version = "0.1.0"
 dependencies = [
+ "dbus",
  "dirs",
  "jiff",
  "sentry",
@@ -6052,6 +6053,7 @@ dependencies = [
  "worklume-platform",
  "worklume-storage",
  "worklume-sync",
+ "x11rb",
 ]
 
 [[package]]

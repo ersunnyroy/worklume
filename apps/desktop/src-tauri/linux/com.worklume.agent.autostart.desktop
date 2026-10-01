@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=Worklume
+Comment=Starts the Worklume time tracking agent at login
+Exec=/usr/bin/worklume-desktop --autostart
+Terminal=false
+X-GNOME-Autostart-enabled=true

@@ -6,8 +6,8 @@
 use std::time::Duration;
 
 use crate::{
-    ActiveWindow, BrowserTab, BrowserUrl, ForegroundApp, IdleError, IdleSource, InputActivity,
-    InputEvent, SensorError, SessionLock,
+    ActiveWindow, Autostart, AutostartError, BrowserTab, BrowserUrl, ForegroundApp, IdleError,
+    IdleSource, InputActivity, InputEvent, SensorError, SessionLock,
 };
 
 /// A sensor that cannot read anything in this build.
@@ -44,12 +44,22 @@ impl SessionLock for Unsupported {
     }
 }
 
+impl Autostart for Unsupported {
+    fn enabled(&self) -> Result<bool, AutostartError> {
+        Err(AutostartError::Unsupported)
+    }
+
+    fn set_enabled(&self, _enabled: bool) -> Result<(), AutostartError> {
+        Err(AutostartError::Unsupported)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::Unsupported;
     use crate::{
-        ActiveWindow, BrowserUrl, ForegroundApp, IdleError, IdleSource, InputActivity, SensorError,
-        SessionLock,
+        ActiveWindow, Autostart, AutostartError, BrowserUrl, ForegroundApp, IdleError, IdleSource,
+        InputActivity, SensorError, SessionLock,
     };
 
     #[test]
@@ -64,5 +74,10 @@ mod tests {
         assert_eq!(Unsupported.active_tab(&app), Err(SensorError::Unsupported));
         assert_eq!(Unsupported.drain(), Err(SensorError::Unsupported));
         assert_eq!(Unsupported.locked(), Err(SensorError::Unsupported));
+        assert_eq!(Unsupported.enabled(), Err(AutostartError::Unsupported));
+        assert_eq!(
+            Unsupported.set_enabled(true),
+            Err(AutostartError::Unsupported)
+        );
     }
 }

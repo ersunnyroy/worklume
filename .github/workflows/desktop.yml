@@ -115,12 +115,14 @@ jobs:
 
       # The X11 adapters against a real X server, with input faked through XTEST, and the
       # session lock against stand-in logind and screen saver services on a private bus
-      # (E12-S03).
-      - name: Test the Linux sensors (Xvfb and D-Bus)
+      # (E12-S03, E12-S04). Then the real app's tray against a stand-in StatusNotifierWatcher,
+      # the service stock Ubuntu's AppIndicator extension provides (E12-S05).
+      - name: Test the Linux sensors and tray (Xvfb and D-Bus)
         if: runner.os == 'Linux'
         run: >-
-          xvfb-run -a dbus-run-session --
+          xvfb-run -a dbus-run-session -- sh -c '
           cargo test -p worklume-platform --features fake --lib --test x11 --locked -- --ignored
+          && cargo test -p worklume-desktop --test tray_linux --locked -- --ignored'
 
       - name: Build unsigned installers
         run: pnpm --filter @worklume/desktop build:app

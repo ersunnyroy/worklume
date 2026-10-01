@@ -1,3 +1,7 @@
+//! The tray icon and its menu (E09-S01). On Linux it is a `StatusNotifierItem` through
+//! `libayatana-appindicator`, which stock Ubuntu shows through its `AppIndicator` extension
+//! (E12-S05).
+
 use tauri::menu::{Menu, MenuEvent, MenuItem};
 use tauri::tray::TrayIconBuilder;
 use tauri::{AppHandle, Runtime};
@@ -29,8 +33,8 @@ impl TrayAction {
         Self::ALL.into_iter().find(|action| action.id() == id)
     }
 
-    /// Menu text. The window is localised (E09-S09); the tray menu follows with the per-OS tray
-    /// stories (E10-S07, E11-S05, E12-S05), which read the system language.
+    /// Menu text, in English like the window: both are localised together when a second
+    /// language arrives.
     #[must_use]
     pub const fn label(self) -> &'static str {
         match self {
@@ -54,8 +58,37 @@ pub fn install<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
     if let Some(icon) = app.default_window_icon() {
         tray = tray.icon(icon.clone());
     }
+    #[cfg(target_os = "linux")]
+    if let Some(dir) = linux_icon_dir() {
+        tray = tray.temp_dir_path(dir);
+    }
     tray.build(app)?;
     Ok(())
+}
+
+/// Where the tray icon's image goes on Linux, whose trays take a file: a folder only the member
+/// can open. Without `XDG_RUNTIME_DIR` the tray library falls back to a shared
+/// `/tmp/tray-icon`, which another user may own, or hold a planted link in.
+#[cfg(target_os = "linux")]
+fn linux_icon_dir() -> Option<std::path::PathBuf> {
+    use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
+
+    let dir = dirs::runtime_dir()
+        .or_else(dirs::cache_dir)?
+        .join(crate::diagnostics::APP_IDENTIFIER)
+        .join("tray");
+    let private = std::fs::DirBuilder::new()
+        .recursive(true)
+        .mode(0o700)
+        .create(&dir)
+        .and_then(|()| std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)));
+    match private {
+        Ok(()) => Some(dir),
+        Err(error) => {
+            tracing::warn!(%error, "no private folder for the tray icon; using the library's");
+            None
+        }
+    }
 }
 
 fn menu_item<R: Runtime>(app: &AppHandle<R>, action: TrayAction) -> tauri::Result<MenuItem<R>> {
