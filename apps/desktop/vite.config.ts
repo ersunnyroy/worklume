@@ -22,5 +22,7 @@ export default defineConfig({
     include: ['src/**/*.test.{ts,tsx}'],
     setupFiles: ['./src/test/setup.ts'],
     restoreMocks: true,
+    // Times of day in tests read the same everywhere.
+    env: { TZ: 'UTC' },
   },
 });

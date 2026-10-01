@@ -32,11 +32,12 @@ counterpart of the API's module-boundary tests.
 
 - Commands are declared once in Rust. `tauri-specta` generates `frontend/src/ipc/bindings.gen.ts`
   from them; `tests/bindings.rs` fails when the committed file is stale.
-- Listing commands in the app manifest (`build.rs`) puts app commands under Tauri's ACL, and
-  `capabilities/main.json` grants the main window only `allow-agent-status`. The allowlist test
-  checks that refused calls fail with the ACL's "not allowed" error, not merely any error: with
-  `core:default` granted, several core commands get past the ACL and fail later on missing
-  arguments, which a looser test would miss.
+- Listing commands in the app manifest (`build.rs`) puts app commands under Tauri's ACL.
+  `capabilities/main.json` grants the main window its app commands and `core:event`'s
+  `allow-listen` and `allow-unlisten`, for the agent's `agent-changed` event, and nothing else:
+  it may not emit events. The allowlist test checks that refused calls fail with the ACL's "not
+  allowed" error, not merely any error: with `core:default` granted, several core commands get
+  past the ACL and fail later on missing arguments, which a looser test would miss.
 - `tauri-specta` and `specta` are still release candidates. They are pinned with `=` as their
   authors require; upgrade them together and regenerate the bindings.
 - IPC types live in the shell (`src-tauri/src/ipc.rs`) and map from domain types, so the domain
@@ -51,8 +52,9 @@ requires Tauri 2.12.
 
 ## Encrypted local storage
 
-E09-S02 built `worklume-storage` and the `SecretStore` trait in `worklume-platform`. The agent
-does not open the store yet; the tracker (E09-S04) owns its lifecycle.
+E09-S02 built `worklume-storage` and the `SecretStore` trait in `worklume-platform`. Since
+E09-S09 the agent runtime opens the store in `<local data>/com.worklume.agent/store`, on the
+ticking thread, and the tracker owns what it holds.
 
 **Keys.**
 
@@ -226,9 +228,8 @@ E09-S11. The code is in `src-tauri/src/watchdog.rs`, `src-tauri/src/diagnostics/
 ## Tracker
 
 E09-S04: `worklume-core::tracker`, the timer's state machine. The timekeeper (next section)
-drives it on the device's clock. The loop that ticks every second, and the
-one-store-per-organization setup, arrive with sign-in (E09-S03) and the agent UI (E09-S09).
-Until then both run in tests against controllable clocks.
+drives it on the device's clock, and since E09-S09 the agent runtime ticks it every second in
+the app (see "Agent UI"). The one-store-per-organization setup arrives with sign-in (E09-S03).
 
 **States.** Stopped, running, idle-pending, paused and on-break.
 
@@ -283,6 +284,11 @@ Until then both run in tests against controllable clocks.
   and activity is clamped to tracked time.
 - It is attributed to the entry with the most time in it (the later entry on a tie).
 - It is flagged `partial_slot` when not fully tracked; slots under one whole second aren't sent.
+- A small ledger (E09-S09) keeps the tracked time per window for two days, for the agent's
+  "today" total. Idle time is pending from where inactivity began until the decision: keeping
+  or reassigning it keeps it, discarding or stopping drops it. Within an entry the timer runs
+  without gaps, so the idle time already counted in a window is exactly its part from where
+  inactivity began. A window counts towards the day it starts in.
 - Seconds are rounded on running totals, not per slot, so a day's slots add up to the tracked
   time within one second. That is the acceptance criterion, checked by
   `tests/simulation.rs`: two seeded 24-hour runs with jitter, missed ticks, random actions,
@@ -519,6 +525,81 @@ extra fields such as event times or buckets. The harness types and points uneven
 `Work` step, has a `Jiggle` step, and checks the features in every script. Mutation checks: 11
 of 11 caught.
 
+## Agent UI
+
+E09-S09, part 1: the timer screen. The window shows what the agent reports and asks it to act;
+it holds no tracking state and decides nothing (architecture §5).
+
+**Core.**
+
+- `worklume-core::catalog`: the projects and tasks the member may track, and the organization's
+  break policies. Every start, switch, break or reassignment from the UI names its target by ID,
+  and the agent checks the ID against the catalog before acting. The webview is a client like
+  any other. The server checks again when the events arrive (`project_unavailable`).
+- `worklume-core::view::timer_view`: the `TimerView` the UI shows. It carries the status, the
+  work with names, today's total, the question being asked, and the actions allowed now (stop is
+  refused while idle awaits an answer; start needs a catalogued project).
+- Today's total comes from the tracker's two-day ledger (see "Tracker"), counted from the
+  device's local midnight (`jiff`).
+
+**Shell.**
+
+- `agent::Agent` owns the timekeeper behind a mutex, with the catalog. It is created in the
+  `Starting` state and managed by Tauri.
+- A background thread (`ticker.rs`) opens the store, so a slow or prompting keychain never holds
+  up the window. It then ticks every second and emits `agent-changed` when the view changes, and
+  brings the window forward when the agent starts asking a question.
+- If the store can't open, the agent is `Unavailable` with a reason the UI explains (keychain,
+  store in use, store from a newer version, storage, clock, no data folder). The thread retries
+  every 30 seconds, and a failure is logged once until it changes.
+- Sensors the per-OS adapters don't provide yet read `Unsupported` (`worklume_platform::Unsupported`).
+  Until they do, the app tracks time without idle detection, app usage or input features, and
+  reports `input_method: idle_poll`.
+- The idle policy and the catalog start empty. The configuration (E09-S06) sets them through
+  `Agent::set_idle_policy` and `Agent::set_catalog`. Until then the window says "No projects
+  yet".
+
+**Commands** (typed, in `ipc.rs`): `agent_state`, `work_catalog`, `timer_start`, `timer_switch`,
+`timer_stop`, `timer_resume`, `break_start`, `break_end` and `idle_answer`. Timer commands
+return the new view, or a `CommandError`: `unavailable`, `not_now`, `unknown_project`,
+`unknown_task`, `unknown_break_policy`, `invalid_id` or `failed`.
+
+**UI.**
+
+- React with i18next, as in the web app. English strings live in
+  `frontend/src/i18n/locales/en.json`, with typed keys.
+- The timer screen has the status (a polite live region), the work, today's total, the
+  project/task picker, and stop and break controls, each shown only when the view allows it.
+- The idle question and the resume question after a long sleep are native modal dialogs: focus
+  starts on the first answer and stays inside, the rest of the window is inert, and Escape
+  doesn't dismiss them. A failed answer is reported inside the dialog.
+- **Accessibility (the acceptance criterion):** native controls with labels, a visible focus
+  ring, no keyboard traps outside the questions. `App.test.tsx` walks the start flow by
+  keyboard alone and runs axe on every state.
+
+**Checked end to end.** A headless run on Linux (Xvfb, D-Bus and an unlocked GNOME Keyring)
+showed the window following the agent: "can't track" with the keychain locked, and the timer
+once the store opened.
+
+**Tested.**
+
+- `core/tests/view.rs`: the view through the states, idle time counting until discarded,
+  questions and today's total across a restart.
+- Ledger and catalog unit tests.
+- `src-tauri/tests/agent.rs`: the runtime on fake sensors.
+- `ipc_allowlist.rs`: IDs are checked, events can be listened to but not emitted, and other
+  windows are refused.
+- Frontend tests with axe and keyboard walks.
+- The harness compares the agent's total with the server-side timeline after every script.
+- Mutation checks: 13 of 13 caught.
+
+**Part 2** waits on what it shows:
+
+- the permission wizard (per-OS permission health, E10-S06 and the Windows and Linux stories);
+- "my data" (screenshots, E09-S07, and the member's activity from the server);
+- settings (the configuration, E09-S06);
+- the offline indicator (the sync engine, E09-S05).
+
 ## Simulation harness
 
 E09-S14: `apps/desktop/simulation` (`worklume-simulation`) runs the real agent core on a
@@ -566,6 +647,8 @@ slots, and reports:
 - input features that contradict themselves (a wrong share, more intervals than inputs,
   statistics from fewer than 5 intervals, values out of range), or slots counting more inputs
   of a kind than were made;
+- (in `run`) an agent "today" total that differs by a millisecond from what the server keeps
+  over the agent's two days: the entries less the idle time discarded or stopped (E09-S09);
 - anything left open at the end, or events that never reached the server.
 
 `tests/checker.rs` damages a clean day in each of these ways and expects the report, so the
@@ -644,12 +727,11 @@ manually and by the per-OS tray stories (E10-S07, E11-S05, E12-S05).
 
 ## Webview security
 
-- **IPC allowlist:** `capabilities/main.json` grants the window no permissions. E09-S01 adds typed
-  commands one at a time, which is its acceptance criterion.
+- **IPC allowlist:** `capabilities/main.json` grants the window only its typed commands and
+  listening to events (see "Typed IPC and the allowlist").
 - **CSP:** everything `'self'` only, including styles; IPC through `ipc:` and
-  `http://ipc.localhost`; no objects, frames or form targets. Unlike the web app, the agent UI uses
-  no Radix scroll lock yet, so inline styles stay blocked. Revisit if E09-S09 adds components that
-  inject styles.
+  `http://ipc.localhost`; no objects, frames or form targets. The agent UI injects no styles:
+  its dialogs are native `<dialog>` elements rather than Radix, so inline styles stay blocked.
 - `freezePrototype` is on and `withGlobalTauri` is off, so page scripts cannot patch built-ins or
   reach the Tauri API through a global.
 

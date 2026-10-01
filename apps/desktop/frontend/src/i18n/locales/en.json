@@ -1,0 +1,92 @@
+{
+  "app": {
+    "name": "Worklume",
+    "trayNote": "Closing this window keeps Worklume running from your menu bar or system tray."
+  },
+  "about": {
+    "heading": "About",
+    "version": "Version",
+    "platform": "Platform",
+    "unavailable": "Agent details are unavailable.",
+    "os": {
+      "macos": "macOS",
+      "windows": "Windows",
+      "linux": "Linux"
+    },
+    "linuxSession": "Linux ({{session}})",
+    "session": {
+      "x11": "X11",
+      "wayland": "Wayland",
+      "unknown": "unknown display server"
+    }
+  },
+  "agent": {
+    "starting": "Starting…",
+    "unavailable": {
+      "heading": "Worklume can't track time on this device",
+      "no_data_folder": "Your system didn't give Worklume a folder for its data. Contact your IT team.",
+      "credential_store": "Your system keychain is locked or unavailable. Unlock it and Worklume tries again within 30 seconds.",
+      "in_use": "Another copy of Worklume is still closing. Worklume tries again within 30 seconds.",
+      "outdated": "Your time data was saved by a newer version of Worklume. Install the latest version to continue.",
+      "storage": "Worklume couldn't open its encrypted data. It tries again within 30 seconds; contact support if this continues.",
+      "clock": "Worklume couldn't read your computer's clock. Contact support if this continues."
+    }
+  },
+  "timer": {
+    "heading": "Timer",
+    "status": {
+      "stopped": "Not tracking",
+      "running": "Tracking",
+      "idle": "Idle: waiting for your answer",
+      "pausedSleep": "Paused while your computer slept",
+      "pausedLocked": "Paused while your screen was locked",
+      "onBreak": "On a break",
+      "onBreakNamed": "On a break: {{policy}}"
+    },
+    "today": "Today",
+    "unknownProject": "A project you can no longer track",
+    "unknownTask": "A task you can no longer track",
+    "pickerLegend": "What are you working on?",
+    "project": "Project",
+    "task": "Task",
+    "noTask": "No task",
+    "noProjects": "No projects yet. The projects you can track appear here once you're signed in.",
+    "start": "Start timer",
+    "switch": "Switch",
+    "stop": "Stop timer",
+    "breakPolicy": "Break",
+    "startBreak": "Take a break",
+    "endBreak": "End break",
+    "errors": {
+      "unavailable": "Worklume can't track time on this device right now.",
+      "not_now": "That isn't possible right now.",
+      "unknown_project": "That project isn't available to you any more.",
+      "unknown_task": "That task isn't available to you any more.",
+      "unknown_break_policy": "That break isn't available any more.",
+      "invalid_id": "That choice isn't valid. Pick again.",
+      "failed": "Worklume couldn't record that. Try again; details are in its log."
+    }
+  },
+  "idle": {
+    "heading": "You were away",
+    "since": "No keyboard or mouse input since {{time}}, {{duration}} ago.",
+    "sinceOnly": "No keyboard or mouse input since {{time}}.",
+    "paused": "Your computer slept meanwhile. The timer resumes after you answer, unless you stop it.",
+    "question": "What should happen to that time?",
+    "keep": "Keep it",
+    "discard": "Discard it",
+    "reassignProject": "Project to move it to",
+    "reassign": "Move it",
+    "stop": "Discard it and stop the timer"
+  },
+  "resume": {
+    "heading": "Welcome back",
+    "body": "Your computer slept for longer than your organization's idle limit, so the timer paused.",
+    "resume": "Resume timer",
+    "stop": "Stay stopped"
+  },
+  "duration": {
+    "minutes": "{{minutes}} min",
+    "hoursMinutes": "{{hours}} h {{minutes}} min"
+  }
+}

@@ -29,7 +29,8 @@ impl TrayAction {
         Self::ALL.into_iter().find(|action| action.id() == id)
     }
 
-    /// Menu text. Localisation of the agent UI arrives with E09-S09.
+    /// Menu text. The window is localised (E09-S09); the tray menu follows with the per-OS tray
+    /// stories (E10-S07, E11-S05, E12-S05), which read the system language.
     #[must_use]
     pub const fn label(self) -> &'static str {
         match self {
