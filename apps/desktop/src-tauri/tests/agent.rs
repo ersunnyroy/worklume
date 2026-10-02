@@ -18,6 +18,7 @@ use worklume_core::timekeeper::{IdlePolicy, KeepIdle, Sensors};
 use worklume_core::tracker::InputMethod;
 use worklume_core::view::{Question, TimerStatus};
 use worklume_desktop::agent::{Agent, AgentError, AgentState, IdleAnswer, Unavailable};
+use worklume_platform::Unsupported;
 use worklume_platform::fake::{
     FakeBrowser, FakeClock, FakeIdle, FakeInput, FakeLock, FakeWindow, MemorySecretStore,
 };
@@ -62,6 +63,7 @@ impl Device {
             window: Arc::new(FakeWindow::default()),
             browser: Arc::new(FakeBrowser::default()),
             input: Arc::new(FakeInput::default()),
+            spans: Arc::new(Unsupported),
             lock: Arc::clone(&self.lock) as _,
         }
     }

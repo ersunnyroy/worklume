@@ -1,6 +1,6 @@
 //! A locked session (E12-S03): the timer pauses, locked time and the lock screen's input are
 //! never kept, and unlocking resumes or asks as after a sleep. Also activity measured from the
-//! sensors.
+//! sensors: input events, active spans (E13-S04) or the idle source.
 
 #![allow(
     clippy::unwrap_used,
@@ -19,15 +19,29 @@ use worklume_core::timekeeper::{IdlePolicy, KeepIdle, Prompt};
 use worklume_core::tracker::{IdleResolution, PauseReason, TrackerState};
 use worklume_platform::{InputEvent, InputKind, SensorError};
 
-/// One second passes with a key press in its middle; the agent ticks and measures.
+/// One second passes with a key press in its middle; the agent ticks and measures. The reader
+/// and the compositor both see it; the test decides which the agent has.
 fn type_for(rig: &mut Rig, secs: u64) {
     for _ in 0..secs {
         let from = rig.clock.reading().mono_ms;
         rig.clock.advance(Duration::from_secs(1));
-        rig.input.push([key(from + 500)]);
+        press(rig, [from + 500]);
         rig.idle.input();
         tick(rig);
     }
+}
+
+fn press(rig: &Rig, at: impl IntoIterator<Item = i64>) {
+    for mono_ms in at {
+        rig.spans.input(mono_ms);
+        rig.input.push([key(mono_ms)]);
+    }
+}
+
+/// The agent sees active spans (Wayland) instead of input events.
+fn with_spans(rig: &Rig) {
+    rig.input.set_error(Some(SensorError::Unsupported));
+    rig.spans.set_error(None);
 }
 
 /// One second passes with nobody at the device.
@@ -61,7 +75,7 @@ fn lock_for(rig: &mut Rig, secs: u64) {
 fn unlock(rig: &mut Rig) {
     let from = rig.clock.reading().mono_ms;
     rig.clock.advance(Duration::from_secs(1));
-    rig.input.push((1..=8).map(|n| key(from + n * 100)));
+    press(rig, (1..=8).map(|n| from + n * 100));
     rig.idle.input();
     rig.lock.set(false);
     tick(rig);
@@ -374,4 +388,86 @@ fn without_an_event_reader_activity_comes_from_the_idle_source() {
         assert_eq!(slot.payload["keyboard_seconds"], Value::Null);
         assert_eq!(slot.payload["mouse_seconds"], Value::Null);
     }
+}
+
+#[test]
+fn without_an_event_reader_activity_comes_from_active_spans() {
+    let mut rig = Rig::new(policy(KeepIdle::Prompt));
+    with_spans(&rig);
+    rig.start();
+    type_for(&mut rig, 120);
+    wait(&mut rig, 60);
+    assert_eq!(rig.tracked_seconds(), 180);
+    // As with events: active from the first key press on.
+    let active = slot_sum(&rig, "active_seconds");
+    assert!((119..=120).contains(&active), "active {active}");
+    for slot in rig.harness.events_of("slot.closed") {
+        assert_eq!(slot.payload["keyboard_seconds"], Value::Null);
+        assert_eq!(slot.payload["mouse_seconds"], Value::Null);
+        // Spans carry no events, so no input features either.
+        assert!(
+            slot.payload
+                .get("input_features")
+                .is_none_or(Value::is_null)
+        );
+    }
+}
+
+#[test]
+fn events_are_preferred_to_spans() {
+    let mut rig = Rig::new(policy(KeepIdle::Prompt));
+    rig.spans.set_error(None);
+    rig.start();
+    type_for(&mut rig, 60);
+    assert_eq!(rig.tracked_seconds(), 60);
+    let active = slot_sum(&rig, "active_seconds");
+    assert!((59..=60).contains(&active), "active {active}");
+    assert_eq!(slot_sum(&rig, "keyboard_seconds"), active);
+}
+
+#[test]
+fn the_lock_screen_never_counts_through_active_spans() {
+    let mut rig = Rig::new(policy(KeepIdle::Prompt));
+    with_spans(&rig);
+    rig.start();
+    type_for(&mut rig, 60);
+    // Typing at the lock screen, the password and then the member's own typing make one burst.
+    lock_for(&mut rig, 120);
+    unlock(&mut rig);
+    assert!(matches!(rig.state(), TrackerState::Running { .. }));
+    type_for(&mut rig, 30);
+    wait(&mut rig, 30);
+    assert_eq!(rig.tracked_seconds(), 120);
+    // 59.5 s before the lock, then from a second past the unlock to a second after the last
+    // key (29.5 s): the lock screen's input kept the burst going for that first second.
+    assert_eq!(slot_sum(&rig, "active_seconds"), 89);
+}
+
+#[test]
+fn the_password_typed_to_unlock_never_counts_through_active_spans() {
+    let mut rig = Rig::new(policy(KeepIdle::Prompt));
+    with_spans(&rig);
+    rig.start();
+    type_for(&mut rig, 60);
+    lock_for(&mut rig, 120);
+    unlock(&mut rig);
+    wait(&mut rig, 30);
+    assert_eq!(rig.tracked_seconds(), 90);
+    // Only the 59.5 s before the lock: the password's last second runs past the unlock, and
+    // doesn't count.
+    assert_eq!(slot_sum(&rig, "active_seconds"), 59);
+}
+
+#[test]
+fn spans_that_fail_leave_activity_to_the_idle_source() {
+    let mut rig = Rig::new(policy(KeepIdle::Prompt));
+    with_spans(&rig);
+    rig.spans.set_error(Some(SensorError::Failed(
+        "the compositor went away".to_owned(),
+    )));
+    rig.start();
+    type_for(&mut rig, 60);
+    assert_eq!(rig.tracked_seconds(), 60);
+    let active = slot_sum(&rig, "active_seconds");
+    assert!((59..=61).contains(&active), "active {active}");
 }

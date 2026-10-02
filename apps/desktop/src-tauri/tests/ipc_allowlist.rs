@@ -17,6 +17,7 @@ use worklume_core::timekeeper::Sensors;
 use worklume_core::tracker::InputMethod;
 use worklume_desktop::MAIN_WINDOW;
 use worklume_desktop::agent::Agent;
+use worklume_platform::Unsupported;
 use worklume_platform::fake::{
     FakeBrowser, FakeClock, FakeIdle, FakeInput, FakeLock, FakeWindow, MemorySecretStore,
 };
@@ -38,6 +39,7 @@ fn app(dir: &TempDir) -> App<MockRuntime> {
                 window: Arc::new(FakeWindow::default()),
                 browser: Arc::new(FakeBrowser::default()),
                 input: Arc::new(FakeInput::default()),
+                spans: Arc::new(Unsupported),
                 lock: Arc::new(FakeLock::default()),
             },
             InputMethod::Hooks,

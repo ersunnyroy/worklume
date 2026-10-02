@@ -9,22 +9,31 @@
 //! the ticks fall, and continuous typing makes the whole time active. Key presses count for the
 //! keyboard; pointer moves, clicks and scrolls for the mouse.
 //!
-//! **From the idle source**, where the OS gives only the time since the last input (Wayland, or
-//! an event reader that isn't working): the combined figure the E12-S03 criterion asks for.
-//! Each reading contributes the moment of the last input, so continuous input still covers the
-//! whole time and a lone input one second, but inputs between two readings are unknown.
-//! Keyboard and mouse are unknown too, which makes the slot's split null.
+//! **From active spans** (E13-S04), where the OS reports when the member became active and when
+//! they went idle (Wayland): each span runs from the first input of a burst to one second after
+//! its last, which is exactly what the events of that burst would count. The figure is combined:
+//! keyboard and mouse are unknown, which makes the slot's split null.
+//!
+//! **From the idle source**, where the OS gives only the time since the last input (an event
+//! reader that isn't working, or no notifications): the combined figure the E12-S03 criterion
+//! asks for. Each reading contributes the moment of the last input, so continuous input still
+//! covers the whole time and a lone input one second, but inputs between two readings are
+//! unknown.
 //!
 //! The meter remembers the latest input of each kind, so a second that began in one tick is
 //! counted in the next. Whatever stops the count (a sleep, a locked session, a new boot) makes it
 //! forget.
 
-use worklume_platform::{InputEvent, InputKind};
+use worklume_platform::{ActiveSpan, InputEvent, InputKind};
 
 use crate::tracker::Activity;
 
 /// How long an input keeps the member active.
 pub const ACTIVE_AFTER_INPUT_MS: i64 = 1_000;
+
+// Spans end one notification timeout after the last input; the meter counts one second after
+// each input. They must agree for the two to measure the same.
+const _: () = assert!(ACTIVE_AFTER_INPUT_MS == worklume_platform::IDLE_AFTER_MS);
 
 /// Measures activity tick by tick. See the module documentation.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -82,6 +91,38 @@ impl ActivityMeter {
         }
     }
 
+    /// Activity in `(from_mono, to_mono]` from active spans. An open span runs to `to_mono`.
+    /// Spans carry themselves from tick to tick, so nothing is remembered.
+    #[must_use]
+    pub fn from_spans(&mut self, spans: &[ActiveSpan], from_mono: i64, to_mono: i64) -> Activity {
+        self.forget();
+        let mut parts: Vec<(i64, i64)> = spans
+            .iter()
+            .map(|span| {
+                (
+                    span.start_mono.max(from_mono),
+                    span.end_mono.unwrap_or(to_mono).min(to_mono),
+                )
+            })
+            .filter(|(start, end)| end > start)
+            .collect();
+        parts.sort_unstable();
+        let mut total: i64 = 0;
+        let mut reached = from_mono;
+        for (start, end) in parts {
+            let start = start.max(reached);
+            if end > start {
+                total += end - start;
+                reached = end;
+            }
+        }
+        Activity {
+            active_ms: u64::try_from(total).unwrap_or(0),
+            keyboard_ms: None,
+            mouse_ms: None,
+        }
+    }
+
     /// Forgets earlier input: nothing before this carries into the next tick.
     pub fn forget(&mut self) {
         *self = Self::default();
@@ -112,7 +153,7 @@ fn covered(last: &mut Option<i64>, times: impl Iterator<Item = i64>, from: i64, 
 
 #[cfg(test)]
 mod tests {
-    use worklume_platform::{InputEvent, InputKind};
+    use worklume_platform::{ActiveSpan, InputEvent, InputKind};
 
     use super::ActivityMeter;
     use crate::tracker::Activity;
@@ -207,6 +248,54 @@ mod tests {
         let _ = meter.from_events(&[key(900)], 0, 1_000);
         meter.forget();
         assert_eq!(meter.from_events(&[], 1_000, 2_000), split(0, 0, 0));
+    }
+
+    const fn span(start_mono: i64, end_mono: Option<i64>) -> ActiveSpan {
+        ActiveSpan {
+            start_mono,
+            end_mono,
+        }
+    }
+
+    #[test]
+    fn spans_give_the_combined_figure_within_the_interval() {
+        let mut meter = ActivityMeter::default();
+        // Ended before, ended inside, overlapping, and open.
+        let spans = [
+            span(0, Some(900)),
+            span(1_200, Some(1_500)),
+            span(1_400, Some(1_800)),
+            span(2_500, None),
+        ];
+        let activity = meter.from_spans(&spans, 1_000, 3_000);
+        assert_eq!(
+            activity,
+            Activity {
+                active_ms: 600 + 500,
+                keyboard_ms: None,
+                mouse_ms: None,
+            }
+        );
+        // An open span started before the interval covers all of it.
+        assert_eq!(
+            meter
+                .from_spans(&[span(-5_000, None)], 3_000, 4_000)
+                .active_ms,
+            1_000
+        );
+        assert_eq!(meter.from_spans(&[], 4_000, 5_000).active_ms, 0);
+        assert_eq!(
+            meter.from_spans(&[span(0, None)], 6_000, 5_000).active_ms,
+            0
+        );
+    }
+
+    #[test]
+    fn spans_leave_nothing_to_carry_into_the_next_tick() {
+        let mut meter = ActivityMeter::default();
+        let _ = meter.from_events(&[key(900)], 0, 1_000);
+        assert_eq!(meter.from_spans(&[], 1_000, 2_000).active_ms, 0);
+        assert_eq!(meter.from_events(&[], 2_000, 3_000).active_ms, 0);
     }
 
     #[test]

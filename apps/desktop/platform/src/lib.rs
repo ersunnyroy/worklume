@@ -27,6 +27,7 @@ pub mod linux;
 mod secret;
 mod sensors;
 mod session;
+mod spans;
 mod unsupported;
 
 pub use autostart::{Autostart, AutostartError, LAUNCHED_AT_LOGIN};
@@ -39,4 +40,5 @@ pub use input::{InputActivity, InputEvent, InputKind};
 pub use secret::{OsSecretStore, Secret, SecretStore, SecretStoreError, SecretStoreErrorKind};
 pub use sensors::DeviceSensors;
 pub use session::SessionLock;
+pub use spans::{ActiveSpan, ActivitySpans, IDLE_AFTER_MS};
 pub use unsupported::Unsupported;

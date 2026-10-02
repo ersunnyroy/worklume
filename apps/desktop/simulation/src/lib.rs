@@ -26,7 +26,8 @@ mod server;
 mod timeline;
 
 pub use device::{
-    Allowance, Device, DeviceConfig, Focus, START_WALL_MS, SimError, Span, UsageAllowance,
+    Allowance, Device, DeviceConfig, Focus, InputSource, START_WALL_MS, SimError, Span,
+    UsageAllowance,
 };
 pub use hands::InputLedger;
 pub use script::{Answer, Report, Step, run};

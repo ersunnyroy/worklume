@@ -41,10 +41,18 @@ libc = "0.2.189"
 rustix = { version = "1.1.5", features = ["event"] }
 # The X11 protocol in pure Rust: no libX11 or libxcb at run time.
 x11rb = { version = "0.13.2", features = ["randr", "res", "screensaver", "xinput"] }
+# The Wayland protocol in pure Rust: no libwayland at run time (E13). `staging` holds
+# ext-idle-notify-v1.
+wayland-client = "0.31.15"
+wayland-protocols = { version = "0.32.13", features = ["client", "staging"] }
 
-# Fakes input through XTEST in the X11 tests.
+# Fakes input through XTEST in the X11 tests, and through wlroots' virtual pointer in the
+# Wayland tests.
 [target.'cfg(target_os = "linux")'.dev-dependencies]
 x11rb = { version = "0.13.2", features = ["randr", "xtest"] }
+wayland-protocols-wlr = { version = "0.3.12", features = ["client"] }
+# A private runtime folder for the compositor each Wayland test starts.
+tempfile = "3.27.0"
 
 [lints]
 workspace = true

@@ -14,7 +14,7 @@ use std::time::Duration;
 use proptest::prelude::*;
 use worklume_core::timekeeper::{IdlePolicy, KeepIdle};
 use worklume_core::usage::{PrivateWindows, UsageLevel, UsagePolicy};
-use worklume_simulation::{Answer, DeviceConfig, Focus, Step, run};
+use worklume_simulation::{Answer, DeviceConfig, Focus, InputSource, Step, run};
 
 fn seconds(range: std::ops::RangeInclusive<u64>) -> impl Strategy<Value = Duration> {
     range.prop_map(Duration::from_secs)
@@ -125,8 +125,40 @@ proptest! {
             tick: Duration::from_secs(5),
             policy,
             usage,
+            input: InputSource::Events,
         };
         let report = run(&steps, config).unwrap();
         prop_assert!(report.is_clean(), "{}", report);
+    }
+
+    /// E13-S04's criterion: on the same workload, activity from a compositor's active spans
+    /// (Wayland) is within 5 points of activity from input events (X11). By construction it is
+    /// the same; the bound leaves a second per slot for rounding.
+    #[test]
+    fn spans_measure_the_activity_events_do(
+        steps in prop::collection::vec(step(), 1..40),
+        policy in policy(),
+    ) {
+        let config = |input| DeviceConfig {
+            tick: Duration::from_secs(5),
+            policy,
+            usage: UsagePolicy::OFF,
+            input,
+        };
+        let events = run(&steps, config(InputSource::Events)).unwrap();
+        let spans = run(&steps, config(InputSource::Spans)).unwrap();
+        prop_assert!(spans.is_clean(), "{}", spans);
+        let (tracked, slots) = (events.timeline.summary.slot_seconds, events.timeline.summary.slots);
+        prop_assert_eq!(spans.timeline.summary.slot_seconds, tracked);
+        let difference = (events.timeline.summary.active_seconds - spans.timeline.summary.active_seconds).abs();
+        let slots = i64::try_from(slots).unwrap();
+        prop_assert!(
+            difference * 100 <= tracked * 5 || difference <= slots,
+            "{} active seconds from events, {} from spans, of {} tracked in {} slots",
+            events.timeline.summary.active_seconds,
+            spans.timeline.summary.active_seconds,
+            tracked,
+            slots,
+        );
     }
 }

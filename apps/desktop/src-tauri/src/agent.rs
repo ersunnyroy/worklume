@@ -428,8 +428,13 @@ fn this_device() -> Result<(PathBuf, OsSecretStore, Sensors, InputMethod), OpenF
     for problem in &device.problems {
         warn!(%problem, "a sensor couldn't start; the agent tracks without it");
     }
+    for limit in &device.limits {
+        info!(%limit, "a sensor has a limit on this desktop");
+    }
     let input_method = if device.input_hooks {
         InputMethod::Hooks
+    } else if device.activity_spans {
+        InputMethod::Portal
     } else {
         InputMethod::IdlePoll
     };
@@ -439,6 +444,7 @@ fn this_device() -> Result<(PathBuf, OsSecretStore, Sensors, InputMethod), OpenF
         window: device.window,
         browser: device.browser,
         input: device.input,
+        spans: device.spans,
         lock: device.lock,
     };
     Ok((dir, secrets, sensors, input_method))

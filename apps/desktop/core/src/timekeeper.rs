@@ -41,17 +41,22 @@
 //! found the session locked, even one the reader hands over late: on X11 the lock screen's
 //! input, a password being typed, still reaches the agent.
 //!
-//! **Activity** is measured from the input events, or from the idle source when there is no
-//! working event reader (see [`crate::activity`]), by [`Timekeeper::tick_measured`] and by every
-//! timer action. [`Timekeeper::tick`] takes it from the caller instead.
+//! **Active spans** (E13-S04), where the OS reports bursts of activity rather than each input
+//! (Wayland), are drained on every call in the same way. A span still open is reported again on
+//! each drain, so only its latest report is kept. Spans are cut at the same lock floor as events,
+//! and a span begun before it loses the second the lock screen's last input kept it going.
+//!
+//! **Activity** is measured from the input events, else from active spans, else from the idle
+//! source (see [`crate::activity`]), by [`Timekeeper::tick_measured`] and by every timer action.
+//! [`Timekeeper::tick`] takes it from the caller instead.
 
 use std::sync::Arc;
 use std::time::Duration;
 
 use uuid::Uuid;
 use worklume_platform::{
-    ActiveWindow, BrowserUrl, Clock, ClockError, ClockReading, IdleSource, InputActivity,
-    InputEvent, SessionLock,
+    ActiveSpan, ActiveWindow, ActivitySpans, BrowserUrl, Clock, ClockError, ClockReading,
+    IDLE_AFTER_MS, IdleSource, InputActivity, InputEvent, SessionLock,
 };
 use worklume_storage::{StorageError, Store, Timestamp};
 
@@ -149,6 +154,8 @@ pub struct Sensors {
     pub browser: Arc<dyn BrowserUrl>,
     /// Input events, for input timing features (E09-S13) and activity (E12-S03).
     pub input: Arc<dyn InputActivity>,
+    /// Active spans, for activity where there are no input events (E13-S04, Wayland).
+    pub spans: Arc<dyn ActivitySpans>,
     /// Whether the session is locked (E12-S03).
     pub lock: Arc<dyn SessionLock>,
 }
@@ -158,7 +165,7 @@ pub struct Sensors {
 enum Measure {
     /// The caller measured it.
     Given(Activity),
-    /// The sensors: input events, or the idle source without them.
+    /// The sensors: input events, else active spans, else the idle source.
     Sensors,
 }
 
@@ -178,11 +185,16 @@ pub struct Timekeeper {
     window: Arc<dyn ActiveWindow>,
     browser: Arc<dyn BrowserUrl>,
     input: Arc<dyn InputActivity>,
+    spans: Arc<dyn ActivitySpans>,
     lock: Arc<dyn SessionLock>,
     /// Input events drained but not yet handed to the tracker, oldest first.
     input_backlog: Vec<InputEvent>,
-    /// Whether the last drain worked; otherwise activity comes from the idle source.
+    /// Whether the last drain worked; otherwise activity comes from spans or the idle source.
     input_works: bool,
+    /// Active spans drained but not yet measured: ended ones oldest first, then the open one.
+    span_backlog: Vec<ActiveSpan>,
+    /// Whether the last drain of spans worked.
+    spans_work: bool,
     /// No input at or before this monotonic time is kept: it was the lock screen's.
     input_floor_mono: i64,
     /// Present while the session is known to be locked.
@@ -229,9 +241,12 @@ impl Timekeeper {
             window: sensors.window,
             browser: sensors.browser,
             input: sensors.input,
+            spans: sensors.spans,
             lock: sensors.lock,
             input_backlog: Vec::new(),
             input_works: false,
+            span_backlog: Vec::new(),
+            spans_work: false,
             input_floor_mono: i64::MIN,
             locked: None,
             meter: ActivityMeter::default(),
@@ -496,8 +511,7 @@ impl Timekeeper {
             // Input up to now may be the lock screen's.
             self.input_floor_mono = self.input_floor_mono.max(reading.mono_ms);
         }
-        let floor = self.input_floor_mono;
-        self.input_backlog.retain(|event| event.mono_ms > floor);
+        self.drop_locked_input();
         let input_now = self
             .idle
             .idle_for()
@@ -545,19 +559,7 @@ impl Timekeeper {
                     self.unlocked(now)?;
                 }
                 (false, false) => {
-                    let activity = match measure {
-                        Measure::Given(activity) => activity,
-                        Measure::Sensors if self.input_works => self.meter.from_events(
-                            &self.input_backlog,
-                            self.last.mono_ms,
-                            reading.mono_ms,
-                        ),
-                        Measure::Sensors => self.meter.from_last_input(
-                            input_now,
-                            self.last.mono_ms,
-                            reading.mono_ms,
-                        ),
-                    };
+                    let activity = self.measured(measure, reading, input_now);
                     let observed = Observation {
                         usage,
                         input: &self.input_backlog,
@@ -572,6 +574,7 @@ impl Timekeeper {
             self.meter.forget();
         }
         self.input_backlog.clear();
+        self.span_backlog.clear();
         // Only once the sleep is dealt with: a failure above sees the same sleep next time.
         self.last = reading.clone();
         self.last_input_mono = input_now;
@@ -694,9 +697,45 @@ impl Timekeeper {
         Ok(())
     }
 
+    /// Drops input up to the lock floor: the lock screen's.
+    fn drop_locked_input(&mut self) {
+        let floor = self.input_floor_mono;
+        self.input_backlog.retain(|event| event.mono_ms > floor);
+        self.span_backlog.retain_mut(|span| {
+            // A span begun by then was kept going by the lock screen's input for up to a second
+            // after it; as with events, none of that counts.
+            if span.start_mono <= floor {
+                span.start_mono = floor.saturating_add(IDLE_AFTER_MS);
+            }
+            span.end_mono.is_none_or(|end| end > span.start_mono)
+        });
+    }
+
+    /// The activity from the previous reading to `reading`: given, or from the input events,
+    /// else the active spans, else the last input `input_now` known from the idle source.
+    fn measured(
+        &mut self,
+        measure: Measure,
+        reading: &ClockReading,
+        input_now: Option<i64>,
+    ) -> Activity {
+        let (from, to) = (self.last.mono_ms, reading.mono_ms);
+        match measure {
+            Measure::Given(activity) => activity,
+            Measure::Sensors if self.input_works => {
+                self.meter.from_events(&self.input_backlog, from, to)
+            }
+            Measure::Sensors if self.spans_work => {
+                self.meter.from_spans(&self.span_backlog, from, to)
+            }
+            Measure::Sensors => self.meter.from_last_input(input_now, from, to),
+        }
+    }
+
     /// Takes the reader's events into the backlog. A reader that cannot see input (no permission,
     /// or Wayland) gives none: the slots then carry no input features, and activity comes from
-    /// the idle source.
+    /// active spans or the idle source. Spans are taken the same way; an open span replaces its
+    /// earlier report.
     fn drain_input(&mut self) {
         match self.input.drain() {
             Ok(events) => {
@@ -707,6 +746,16 @@ impl Timekeeper {
         }
         let excess = self.input_backlog.len().saturating_sub(MAX_INPUT_BACKLOG);
         self.input_backlog.drain(..excess);
+        match self.spans.drain() {
+            Ok(spans) => {
+                self.spans_work = true;
+                self.span_backlog.retain(|span| span.end_mono.is_some());
+                self.span_backlog.extend(spans);
+            }
+            Err(_) => self.spans_work = false,
+        }
+        let excess = self.span_backlog.len().saturating_sub(MAX_INPUT_BACKLOG);
+        self.span_backlog.drain(..excess);
     }
 
     /// Records idle time once inactivity reaches the timeout.

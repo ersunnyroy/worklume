@@ -7,10 +7,11 @@ use std::time::Duration;
 
 use zeroize::Zeroizing;
 
+use crate::spans::Transitions;
 use crate::{
-    ActiveWindow, BrowserTab, BrowserUrl, Clock, ClockError, ClockReading, ForegroundApp,
-    IdleError, IdleSource, InputActivity, InputEvent, Secret, SecretStore, SecretStoreError,
-    SecretStoreErrorKind, SensorError, SessionLock,
+    ActiveSpan, ActiveWindow, ActivitySpans, BrowserTab, BrowserUrl, Clock, ClockError,
+    ClockReading, ForegroundApp, IDLE_AFTER_MS, IdleError, IdleSource, InputActivity, InputEvent,
+    Secret, SecretStore, SecretStoreError, SecretStoreErrorKind, SensorError, SessionLock,
 };
 
 /// A credential store in memory. It can be switched to fail like a locked keychain.
@@ -326,6 +327,89 @@ impl InputActivity for FakeInput {
         match lock(&self.error).clone() {
             Some(error) => Err(error),
             None => Ok(events),
+        }
+    }
+}
+
+/// Active spans as a Wayland compositor reports them (E13-S04), from inputs the test makes on a
+/// [`FakeClock`]: "active" at the first input after a second without any, "idle" a second after
+/// the last. They run through the real adapters' [`Transitions`]. It can fail like a reader whose
+/// compositor is gone.
+#[derive(Debug)]
+pub struct FakeSpans {
+    clock: Arc<FakeClock>,
+    compositor: Mutex<Compositor>,
+    error: Mutex<Option<SensorError>>,
+}
+
+#[derive(Debug, Default)]
+struct Compositor {
+    boot_id: String,
+    transitions: Transitions,
+    /// The latest input, and whether "idle" was sent for it.
+    last: Option<(i64, bool)>,
+}
+
+impl Compositor {
+    /// Sends "idle" if a second has passed since the last input, by `now`.
+    fn catch_up(&mut self, now: &ClockReading) {
+        if now.boot_id != self.boot_id {
+            // A new boot: the compositor started again.
+            *self = Self {
+                boot_id: now.boot_id.clone(),
+                ..Self::default()
+            };
+        }
+        if let Some((last, false)) = self.last
+            && now.mono_ms >= last + IDLE_AFTER_MS
+        {
+            self.transitions.idle_since(last);
+            self.last = Some((last, true));
+        }
+    }
+}
+
+impl FakeSpans {
+    /// Nothing reported yet.
+    #[must_use]
+    pub fn new(clock: Arc<FakeClock>) -> Self {
+        Self {
+            clock,
+            compositor: Mutex::new(Compositor::default()),
+            error: Mutex::new(None),
+        }
+    }
+
+    /// The member touches the keyboard or mouse at `mono_ms` of the current boot, no earlier
+    /// than their previous input and no later than now.
+    pub fn input(&self, mono_ms: i64) {
+        let mut compositor = lock(&self.compositor);
+        let at = ClockReading {
+            mono_ms,
+            ..self.clock.reading()
+        };
+        compositor.catch_up(&at);
+        if compositor.last.is_none_or(|(_, idle)| idle) {
+            compositor.transitions.active(mono_ms);
+        }
+        compositor.last = Some((mono_ms, false));
+    }
+
+    /// Makes drains fail with `error`, or work again with `None`.
+    pub fn set_error(&self, error: Option<SensorError>) {
+        *lock(&self.error) = error;
+    }
+}
+
+impl ActivitySpans for FakeSpans {
+    fn drain(&self) -> Result<Vec<ActiveSpan>, SensorError> {
+        let now = self.clock.reading();
+        let mut compositor = lock(&self.compositor);
+        compositor.catch_up(&now);
+        let spans = compositor.transitions.drain(now.mono_ms);
+        match lock(&self.error).clone() {
+            Some(error) => Err(error),
+            None => Ok(spans),
         }
     }
 }

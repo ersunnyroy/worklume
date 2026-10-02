@@ -6,9 +6,9 @@
 use std::time::Duration;
 
 use crate::{
-    ActiveWindow, Autostart, AutostartError, BrowserTab, BrowserUrl, ForegroundApp, Frame,
-    IdleError, IdleSource, InputActivity, InputEvent, Monitor, Monitors, ScreenCapture,
-    SensorError, SessionLock,
+    ActiveSpan, ActiveWindow, ActivitySpans, Autostart, AutostartError, BrowserTab, BrowserUrl,
+    ForegroundApp, Frame, IdleError, IdleSource, InputActivity, InputEvent, Monitor, Monitors,
+    ScreenCapture, SensorError, SessionLock,
 };
 
 /// A sensor that cannot read anything in this build.
@@ -35,6 +35,12 @@ impl BrowserUrl for Unsupported {
 
 impl InputActivity for Unsupported {
     fn drain(&self) -> Result<Vec<InputEvent>, SensorError> {
+        Err(SensorError::Unsupported)
+    }
+}
+
+impl ActivitySpans for Unsupported {
+    fn drain(&self) -> Result<Vec<ActiveSpan>, SensorError> {
         Err(SensorError::Unsupported)
     }
 }
