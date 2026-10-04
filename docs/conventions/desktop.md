@@ -857,10 +857,12 @@ only to its allowlisted callers (`docs/spikes/E13-S01-wayland.md`).
 
 ## Capability report
 
-E13-S02, the desktop half: the agent works out what it can measure on this device, feature by
-feature, so a member's missing screenshots or apps read as a limit of their desktop instead of
-as gaps (architecture §5, "Capability reporting"). The server half (storing it on the device,
-alerting admins, the "Reduced on Wayland" badges) waits for the API (E07-S06, E07-S07).
+E13-S02: the agent works out what it can measure on this device, feature by feature, so a
+member's missing screenshots or apps read as a limit of their desktop instead of as gaps
+(architecture §5, "Capability reporting"). Built: the agent's report, the window's
+explanation, the contract, and the web app's badge and explanation for admins. Still to come:
+the API storing the report and alerting admins (E07-S06, blocked on E00-S02), sync sending it
+(E09-S05), and the devices page that shows the badge (E07-S07).
 
 **Decision: six statuses and reason codes, not three statuses.** The database notes give
 `devices.capabilities` as "per feature: granted, denied, unsupported". The contract
@@ -910,7 +912,19 @@ A changed report is logged at info, as codes, and sent to the window
 the agent starts and when it changes; the server accepts at most one a minute per device.
 
 **The window** lists what isn't fully measured under "On this desktop", with a sentence per
-reason (`DeviceLimits`); nothing when everything is.
+reason (`DeviceLimits`); nothing when everything is. A member who declined screen sharing gets
+"Ask me again" (`screenshots_ask_again`): the portal forgets the refusal, the next screenshot
+shows the desktop's dialog again, and the device is checked at once rather than at the next
+minute (`Agent::check_soon`), so the window shows the screenshots waiting for the member.
+
+**The web app** has the admin side in `apps/web/src/components/devices`: `DeviceCapabilityBadge`
+("Wayland: reduced", "Linux X11: reduced"…, nothing when everything is measured) and
+`DeviceCapabilityDetails` (each feature not fully measured, with the reasons in an admin's
+words). Both take the contract's `DesktopCapabilities` type from `@worklume/api-client`; their
+tests render every report in the agent's fixture and require words for every status and
+reason it knows. The devices page (E07-S07) places them once the API serves devices. Every
+device reads as reduced for now, X11 included, because no platform reads browser addresses
+yet (E35).
 
 **Tested.**
 
@@ -924,7 +938,10 @@ reason (`DeviceLimits`); nothing when everything is.
 - `platform/tests/wayland.rs`: the whole report in a sway session (a child process with the
   session's variables): activity estimated, apps `desktop_unsupported`.
 - `sync/tests/capabilities_fixture.rs` and the contract's `desktop-capabilities.test.js` keep
-  the request body and the contract's code lists in step, both ways.
+  the request body and the contract's code lists in step, both ways; the web components'
+  tests read the same fixture.
+- `src-tauri/tests/agent.rs`: changes reported once; new sensors and "Ask me again" wake the
+  check early.
 - Checked by hand in GNOME Shell 46 (headless) with the `sensors` example: at login screenshots
   read `pending(consent_not_asked)` from the real portal, apps granted, activity reduced; after
   a capture that left the dialog up, `pending(consent_dialog_open)`; with the extension off at

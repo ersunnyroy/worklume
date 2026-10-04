@@ -1,11 +1,18 @@
 import { useTranslation } from 'react-i18next';
 import type { CapabilitiesDto } from './ipc/bindings.gen';
 
+interface DeviceLimitsProps {
+  readonly capabilities: CapabilitiesDto | null;
+  /** The member wants to be asked again about sharing their screen, after declining. */
+  readonly onAskAgain: () => void;
+}
+
 /**
  * What Worklume can't fully measure on this desktop, and why, from the agent's capability
- * report. Shows nothing while everything is measured or before the first report.
+ * report. Shows nothing while everything is measured or before the first report. A member
+ * who declined screen sharing can ask to be asked again.
  */
-export function DeviceLimits({ capabilities }: { readonly capabilities: CapabilitiesDto | null }) {
+export function DeviceLimits({ capabilities, onAskAgain }: DeviceLimitsProps) {
   const { t } = useTranslation();
   const limited = (capabilities?.features ?? []).filter((feature) => feature.status !== 'granted');
   if (limited.length === 0) {
@@ -22,6 +29,11 @@ export function DeviceLimits({ capabilities }: { readonly capabilities: Capabili
             {reasons.map((reason) => (
               <p key={reason}>{t(`limits.reason.${reason}`)}</p>
             ))}
+            {feature === 'screenshots' && reasons.includes('consent_declined') && (
+              <button type="button" onClick={onAskAgain}>
+                {t('limits.askAgain')}
+              </button>
+            )}
           </li>
         ))}
       </ul>

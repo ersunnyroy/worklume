@@ -91,6 +91,7 @@
   },
   "limits": {
     "heading": "On this desktop",
+    "askAgain": "Ask me again",
     "feature": {
       "screenshots": "Screenshots",
       "activity": "Activity",
@@ -114,7 +115,7 @@
       "permission_denied": "Your system didn't give Worklume permission for this.",
       "consent_not_asked": "Your desktop will ask you once to share your screen, when the first screenshot is due.",
       "consent_dialog_open": "Your desktop is asking you to share your screen.",
-      "consent_declined": "You declined screen sharing, so no screenshots are taken.",
+      "consent_declined": "You declined screen sharing, so no screenshots are taken. If you ask again, your desktop asks you at the next screenshot.",
       "no_screencast_portal": "Your desktop doesn't offer screen sharing to apps.",
       "estimated_from_idle": "Measured second by second from when you go idle, rather than from each key press and click.",
       "idle_time_only": "Measured from your idle time only.",

@@ -13,6 +13,7 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         "break_end",
         "idle_answer",
         "device_capabilities",
+        "screenshots_ask_again",
     ]);
     tauri_build::try_build(tauri_build::Attributes::new().app_manifest(manifest))?;
     embed_common_controls_manifest_in_tests();

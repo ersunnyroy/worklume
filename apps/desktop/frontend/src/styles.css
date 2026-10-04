@@ -203,6 +203,10 @@ select {
   color: var(--muted);
 }
 
+.limits button {
+  margin-top: 0.5rem;
+}
+
 .about {
   padding-top: 1rem;
   border-top: 1px solid var(--line);

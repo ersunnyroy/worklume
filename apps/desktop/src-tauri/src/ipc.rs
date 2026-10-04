@@ -43,6 +43,7 @@ pub fn builder<R: Runtime>() -> Builder<R> {
             break_end,
             idle_answer,
             device_capabilities,
+            screenshots_ask_again,
         ])
         .events(collect_events![AgentChanged, CapabilitiesChanged])
 }
@@ -651,4 +652,13 @@ impl From<CapabilityReason> for CapabilityReasonDto {
 #[must_use]
 pub fn device_capabilities(agent: State<'_, Agent>) -> Option<CapabilitiesDto> {
     agent.capabilities().as_ref().map(CapabilitiesDto::from)
+}
+
+/// After the member declined to share their screen, lets the next screenshot ask them again.
+/// Returns whether they had declined; `CapabilitiesChanged` follows with the new state.
+#[tauri::command]
+#[specta::specta]
+#[must_use]
+pub fn screenshots_ask_again(agent: State<'_, Agent>) -> bool {
+    agent.ask_again_for_screen_sharing()
 }

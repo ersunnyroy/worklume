@@ -25,6 +25,7 @@ vi.mock('./ipc/bindings.gen', () => ({
     breakEnd: vi.fn(),
     idleAnswer: vi.fn(),
     deviceCapabilities: vi.fn(),
+    screenshotsAskAgain: vi.fn(),
   },
   events: {
     agentChanged: { listen: vi.fn() },
@@ -355,5 +356,16 @@ describe('App', () => {
     expect(limits).toHaveTextContent('Screenshots Off');
     expect(limits).toHaveTextContent('You declined screen sharing, so no screenshots are taken.');
     expect(await accessibilityViolations()).toEqual([]);
+
+    // Asking again goes to the agent, whose next report shows the screenshots waiting.
+    mocked.screenshotsAskAgain.mockResolvedValue(true);
+    await userEvent.setup().click(within(limits).getByRole('button', { name: 'Ask me again' }));
+    expect(mocked.screenshotsAskAgain).toHaveBeenCalledTimes(1);
+    pushCapabilities({
+      features: [{ feature: 'screenshots', status: 'pending', reasons: ['consent_not_asked'] }],
+    });
+    expect(screen.getByRole('region', { name: 'On this desktop' })).toHaveTextContent(
+      'Screenshots Waiting',
+    );
   });
 });

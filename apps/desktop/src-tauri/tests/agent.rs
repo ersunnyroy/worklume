@@ -18,7 +18,9 @@ use worklume_core::catalog::{BreakPolicy, Catalog, CatalogError, Project, Task};
 use worklume_core::timekeeper::{IdlePolicy, KeepIdle, Sensors};
 use worklume_core::tracker::InputMethod;
 use worklume_core::view::{Question, TimerStatus};
-use worklume_desktop::agent::{Agent, AgentError, AgentState, IdleAnswer, Unavailable};
+use worklume_desktop::agent::{
+    Agent, AgentError, AgentState, DeviceControl, IdleAnswer, Unavailable,
+};
 use worklume_platform::{
     Capability, CapabilityReason, CapabilityReport, CapabilityStatus, Feature, LinuxDesktop,
     ReportedPlatform, Unsupported,
@@ -339,23 +341,43 @@ fn gnome_report(screenshots: &Capability) -> CapabilityReport {
     )
 }
 
+/// A device whose report the test sets, and whose screen sharing the member declined or not.
+struct StandInDevice {
+    report: Mutex<CapabilityReport>,
+    declined: Mutex<bool>,
+}
+
+impl DeviceControl for StandInDevice {
+    fn report(&self) -> CapabilityReport {
+        self.report.lock().expect("the report").clone()
+    }
+
+    fn ask_again_for_screen_sharing(&self) -> bool {
+        std::mem::take(&mut *self.declined.lock().expect("the flag"))
+    }
+}
+
+fn limited(status: CapabilityStatus, reason: CapabilityReason) -> Capability {
+    Capability::limited(status, reason, &[])
+}
+
 #[test]
 fn what_the_device_can_measure_is_kept_and_reported_when_it_changes() {
     let device = Device::new();
-    // No sensors yet: nothing to report.
+    // No sensors yet: nothing to report, nothing to ask again.
     assert_eq!(device.agent.check_capabilities(), None);
     assert_eq!(device.agent.capabilities(), None);
+    assert!(!device.agent.ask_again_for_screen_sharing());
 
-    let pending = Capability::limited(
-        CapabilityStatus::Pending,
-        CapabilityReason::ConsentNotAsked,
-        &[],
-    );
-    let current = Arc::new(Mutex::new(gnome_report(&pending)));
-    device.agent.set_capability_source(Arc::new({
-        let current = Arc::clone(&current);
-        move || current.lock().expect("the report").clone()
-    }));
+    let pending = limited(CapabilityStatus::Pending, CapabilityReason::ConsentNotAsked);
+    let stand_in = Arc::new(StandInDevice {
+        report: Mutex::new(gnome_report(&pending)),
+        declined: Mutex::new(false),
+    });
+    device.agent.set_device(Arc::clone(&stand_in) as _);
+    // New sensors are checked without waiting for the minute.
+    assert!(device.agent.wait_for_check(Duration::ZERO));
+    assert!(!device.agent.wait_for_check(Duration::from_millis(10)));
     // The first report is a change; the same again is not.
     let first = device.agent.check_capabilities().expect("the first report");
     assert_eq!(
@@ -366,9 +388,34 @@ fn what_the_device_can_measure_is_kept_and_reported_when_it_changes() {
     assert_eq!(device.agent.capabilities(), Some(first));
 
     // The member shares the screen.
-    *current.lock().expect("the report") = gnome_report(&Capability::granted());
+    *stand_in.report.lock().expect("the report") = gnome_report(&Capability::granted());
     let granted = device.agent.check_capabilities().expect("a change");
     assert!(!granted.is_reduced());
     assert_eq!(device.agent.capabilities(), Some(granted));
     assert_eq!(device.agent.check_capabilities(), None);
+}
+
+#[test]
+fn asking_again_about_screen_sharing_checks_the_device_soon() {
+    let device = Device::new();
+    let declined = limited(CapabilityStatus::Denied, CapabilityReason::ConsentDeclined);
+    let stand_in = Arc::new(StandInDevice {
+        report: Mutex::new(gnome_report(&declined)),
+        declined: Mutex::new(true),
+    });
+    device.agent.set_device(Arc::clone(&stand_in) as _);
+    assert!(device.agent.wait_for_check(Duration::ZERO));
+    drop(device.agent.check_capabilities());
+
+    // A thread waiting for the next check wakes when the member asks.
+    let waiting = std::thread::scope(|scope| {
+        let waiter = scope.spawn(|| device.agent.wait_for_check(Duration::from_secs(10)));
+        std::thread::sleep(Duration::from_millis(50));
+        assert!(device.agent.ask_again_for_screen_sharing());
+        waiter.join().expect("the waiter")
+    });
+    assert!(waiting);
+    // Asking twice changes nothing and wakes nobody.
+    assert!(!device.agent.ask_again_for_screen_sharing());
+    assert!(!device.agent.wait_for_check(Duration::from_millis(10)));
 }

@@ -135,9 +135,11 @@ impl PortalCapture {
         }
     }
 
-    /// Lets the next capture ask the member again after they cancelled.
-    pub fn ask_again(&self) {
-        lock(&self.shared.state).declined = false;
+    /// Lets the next capture ask the member again after they cancelled. Returns whether they
+    /// had.
+    #[must_use]
+    pub fn ask_again(&self) -> bool {
+        std::mem::take(&mut lock(&self.shared.state).declined)
     }
 
     /// Whether a restore token is held: captures then need no dialog, unless the member revoked

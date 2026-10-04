@@ -198,6 +198,9 @@ fn the_main_window_may_read_what_the_device_can_measure() {
     let response = invoke(&main, "device_capabilities").expect("device_capabilities is allowed");
     // Not checked yet in this app: the thread that checks isn't running.
     assert_eq!(json_of(&response), Value::Null);
+    // No sensors in this app, so nothing was declined.
+    let asked = invoke(&main, "screenshots_ask_again").expect("screenshots_ask_again is allowed");
+    assert_eq!(json_of(&asked), Value::Bool(false));
 }
 
 #[test]
@@ -249,6 +252,7 @@ fn other_windows_may_not_call_anything() {
         "break_end",
         "idle_answer",
         "device_capabilities",
+        "screenshots_ask_again",
         "plugin:event|listen",
     ] {
         assert_refused(&other, command);

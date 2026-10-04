@@ -1,5 +1,6 @@
 import { render, screen, within } from '@testing-library/react';
-import { describe, expect, it } from 'vitest';
+import userEvent from '@testing-library/user-event';
+import { describe, expect, it, vi } from 'vitest';
 import { DeviceLimits } from './DeviceLimits';
 import type { CapabilitiesDto, FeatureCapabilityDto } from './ipc/bindings.gen';
 import { accessibilityViolations } from './test/axe';
@@ -28,11 +29,14 @@ const gnomeFirstLogin: CapabilitiesDto = {
 
 describe('DeviceLimits', () => {
   it('shows nothing before the first report or when everything is measured', () => {
-    const { container, rerender } = render(<DeviceLimits capabilities={null} />);
+    const { container, rerender } = render(
+      <DeviceLimits capabilities={null} onAskAgain={vi.fn()} />,
+    );
     expect(container).toBeEmptyDOMElement();
 
     rerender(
       <DeviceLimits
+        onAskAgain={vi.fn()}
         capabilities={{
           features: (
             ['screenshots', 'activity', 'idle', 'apps', 'urls', 'session_lock'] as const
@@ -44,7 +48,7 @@ describe('DeviceLimits', () => {
   });
 
   it('explains each feature that is not fully measured, and only those', () => {
-    render(<DeviceLimits capabilities={gnomeFirstLogin} />);
+    render(<DeviceLimits capabilities={gnomeFirstLogin} onAskAgain={vi.fn()} />);
 
     const section = screen.getByRole('region', { name: 'On this desktop' });
     const items = within(section).getAllByRole('listitem');
@@ -62,8 +66,33 @@ describe('DeviceLimits', () => {
     expect(within(section).queryByText('Screen lock')).not.toBeInTheDocument();
   });
 
+  it('offers to ask again only after the member declined screen sharing', async () => {
+    const user = userEvent.setup();
+    const askAgain = vi.fn();
+    const { rerender } = render(
+      <DeviceLimits capabilities={gnomeFirstLogin} onAskAgain={askAgain} />,
+    );
+    expect(screen.queryByRole('button', { name: 'Ask me again' })).not.toBeInTheDocument();
+
+    const declined: CapabilitiesDto = {
+      features: [
+        { feature: 'screenshots', status: 'denied', reasons: ['consent_declined'] },
+        { feature: 'apps', status: 'denied', reasons: ['gnome_extension_disabled'] },
+      ],
+    };
+    rerender(<DeviceLimits capabilities={declined} onAskAgain={askAgain} />);
+    // One button, under screenshots: never for the extension the member turned off.
+    const button = screen.getByRole('button', { name: 'Ask me again' });
+    expect(button.closest('li')).toHaveTextContent('Screenshots Off');
+    await user.click(button);
+    expect(askAgain).toHaveBeenCalledTimes(1);
+    expect(await accessibilityViolations()).toEqual([]);
+  });
+
   it('has no detectable accessibility violations', async () => {
-    const { container } = render(<DeviceLimits capabilities={gnomeFirstLogin} />);
+    const { container } = render(
+      <DeviceLimits capabilities={gnomeFirstLogin} onAskAgain={vi.fn()} />,
+    );
 
     expect(await accessibilityViolations(container)).toEqual([]);
   });

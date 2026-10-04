@@ -43,11 +43,13 @@ fn run<R: Runtime>(app: &AppHandle<R>) {
                 warn!(%error, "the window could not be told what the device can measure");
             }
         }
-        // Until the sensors have started there is nothing to check.
-        thread::sleep(if agent.capabilities().is_some() {
+        // Until the sensors have started there is nothing to check. A member's request (asking
+        // again about screen sharing) or new sensors wake it early.
+        let wait = if agent.capabilities().is_some() {
             CHECK_EVERY
         } else {
             WAIT_FOR_SENSORS
-        });
+        };
+        let _ = agent.wait_for_check(wait);
     }
 }

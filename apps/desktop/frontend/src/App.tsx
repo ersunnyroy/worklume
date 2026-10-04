@@ -1,6 +1,7 @@
 import { useTranslation } from 'react-i18next';
 import { About } from './About';
 import { DeviceLimits } from './DeviceLimits';
+import { commands } from './ipc/bindings.gen';
 import { useAgent } from './ipc/use-agent';
 import { useDeviceCapabilities } from './ipc/use-device-capabilities';
 import { TimerScreen } from './timer/TimerScreen';
@@ -34,7 +35,13 @@ export function App() {
             run={agent.run}
           />
         )}
-        <DeviceLimits capabilities={capabilities} />
+        <DeviceLimits
+          capabilities={capabilities}
+          onAskAgain={() => {
+            // The agent's next report shows the screenshots waiting for the member.
+            void commands.screenshotsAskAgain().catch(() => undefined);
+          }}
+        />
       </main>
       <About />
     </div>

@@ -531,7 +531,8 @@ fn a_member_who_cancels_is_not_asked_again_until_asked_for() {
     );
 
     portal.portal().member = Member::Shares;
-    screen.ask_again();
+    assert!(screen.ask_again(), "the member had declined");
+    assert!(!screen.ask_again(), "asked again already");
     assert_eq!(screen.consent(), Consent::NotAsked);
     assert!(screen.capture(Monitors::All).is_ok());
     assert_eq!(portal.portal().starts, 2);

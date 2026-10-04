@@ -52,6 +52,9 @@ pub struct DeviceSensors {
     inhibited: bool,
     /// Adapters that report their own capability.
     probes: Vec<(Feature, Arc<dyn CapabilityProbe>)>,
+    /// Screenshots through the desktop portal, which the member may have declined.
+    #[cfg(target_os = "linux")]
+    portal: Option<Arc<crate::linux::PortalCapture>>,
     started: Instant,
 }
 
@@ -80,6 +83,8 @@ impl DeviceSensors {
             failed: Vec::new(),
             inhibited: false,
             probes: Vec::new(),
+            #[cfg(target_os = "linux")]
+            portal: None,
             started: Instant::now(),
         };
         sensors.start_os(clock, secrets);
@@ -175,6 +180,18 @@ impl DeviceSensors {
         assess(&readings)
     }
 
+    /// After the member declined to share their screen, lets the next screenshot ask again,
+    /// as the member asked from the agent's window. Returns whether they had declined; on
+    /// desktops without such a consent, nothing changes.
+    #[must_use]
+    pub fn ask_again_for_screen_sharing(&self) -> bool {
+        #[cfg(target_os = "linux")]
+        if let Some(portal) = &self.portal {
+            return portal.ask_again();
+        }
+        false
+    }
+
     #[cfg(target_os = "linux")]
     fn start_os(&mut self, clock: &Arc<dyn Clock>, secrets: &Arc<dyn SecretStore>) {
         use crate::linux::{LinuxSessionLock, X11Capture, X11Idle, X11Input, X11Window};
@@ -186,7 +203,9 @@ impl DeviceSensors {
                 // Screenshots through the portal, which asks the member at the first capture.
                 let portal = Arc::new(crate::linux::PortalCapture::new(Arc::clone(secrets)));
                 self.capture = Arc::clone(&portal) as _;
-                self.probes.push((Feature::Screenshots, portal));
+                self.probes
+                    .push((Feature::Screenshots, Arc::clone(&portal) as _));
+                self.portal = Some(portal);
                 return self.start_wayland(clock);
             }
             _ => return,

@@ -73,6 +73,11 @@ export const commands = {
 	deviceCapabilities: () => __TAURI_INVOKE<{
 	features: FeatureCapabilityDto[],
 } | null>("device_capabilities"),
+	/**
+	 *  After the member declined to share their screen, lets the next screenshot ask them again.
+	 *  Returns whether they had declined; `CapabilitiesChanged` follows with the new state.
+	 */
+	screenshotsAskAgain: () => __TAURI_INVOKE<boolean>("screenshots_ask_again"),
 };
 
 /** Events */

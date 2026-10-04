@@ -15,6 +15,7 @@
     "allow-break-end",
     "allow-idle-answer",
     "allow-device-capabilities",
+    "allow-screenshots-ask-again",
     "core:event:allow-listen",
     "core:event:allow-unlisten"
   ]
