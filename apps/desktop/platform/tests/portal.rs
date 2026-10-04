@@ -30,8 +30,11 @@ use dbus::channel::{MatchingReceiver, Sender};
 use dbus::message::{MatchRule, Message};
 use tempfile::TempDir;
 use worklume_platform::fake::MemorySecretStore;
-use worklume_platform::linux::{ANSWER_WITHIN, PortalCapture, TOKEN_SECRET};
-use worklume_platform::{Monitors, ScreenCapture, SecretStore, SensorError};
+use worklume_platform::linux::{ANSWER_WITHIN, Consent, PortalCapture, TOKEN_SECRET};
+use worklume_platform::{
+    CapabilityProbe, CapabilityReason, CapabilityStatus, Monitors, ScreenCapture, SecretStore,
+    SensorError,
+};
 
 const OBJECT: &str = "/org/freedesktop/portal/desktop";
 /// The test source's colour, as `videotestsrc` takes it: `ARGB`.
@@ -154,6 +157,8 @@ struct Portal {
     closed_sessions: u32,
     issued: u32,
     due: Vec<(Instant, Message)>,
+    /// The portal offers `ScreenCast` (its backend has it).
+    screencast: bool,
 }
 
 /// A stand-in for the portal's `ScreenCast` interface.
@@ -175,6 +180,7 @@ impl StandIn {
             closed_sessions: 0,
             issued: 0,
             due: Vec::new(),
+            screencast: true,
         }));
         let stop = Arc::new(AtomicBool::new(false));
         let (ready_tx, ready_rx) = std::sync::mpsc::channel();
@@ -263,6 +269,9 @@ fn answer(call: &Message, portal: &mut Portal) -> (Message, Option<Message>) {
         .map(|member| member.to_string())
         .unwrap_or_default();
     let path = call.path().map(|path| path.to_string()).unwrap_or_default();
+    if call.interface().as_deref() == Some("org.freedesktop.DBus.Properties") {
+        return (properties(call, portal), None);
+    }
     if path != OBJECT {
         // Request.Close and Session.Close.
         if path.contains("/session/") && member == "Close" {
@@ -357,6 +366,21 @@ fn answer(call: &Message, portal: &mut Portal) -> (Message, Option<Message>) {
     }
 }
 
+/// The portal's properties: only `ScreenCast`'s version, when it offers screen casts. A
+/// missing interface is answered as `GDBus` answers.
+fn properties(call: &Message, portal: &Portal) -> Message {
+    let (wanted, property): (String, String) = call.read2().unwrap_or_default();
+    if portal.screencast && wanted == "org.freedesktop.portal.ScreenCast" && property == "version" {
+        call.method_return()
+            .append1(Variant(Box::new(5_u32) as Box<dyn RefArg>))
+    } else {
+        call.error(
+            &"org.freedesktop.DBus.Error.InvalidArgs".into(),
+            c"No such interface",
+        )
+    }
+}
+
 /// Start's streams: `count` monitors side by side, each the test source.
 fn shared(count: u32) -> Vec<(u32, PropMap)> {
     (0..count)
@@ -414,8 +438,17 @@ fn one_consent_then_captures_without_asking() {
     let secrets = Arc::new(MemorySecretStore::default());
     let screen = capture(&secrets);
     assert_eq!(screen.monitors(), Err(SensorError::PermissionDenied));
+    // The desktop will ask at the first capture.
+    assert_eq!(screen.consent(), Consent::NotAsked);
+    assert_reports(
+        &screen,
+        CapabilityStatus::Pending,
+        &[CapabilityReason::ConsentNotAsked],
+    );
 
     let frames = screen.capture(Monitors::All).expect("frames");
+    assert_eq!(screen.consent(), Consent::Granted);
+    assert_reports(&screen, CapabilityStatus::Granted, &[]);
     assert_eq!(frames.len(), 1);
     let frame = &frames[0];
     assert_eq!((frame.monitor.width, frame.monitor.height), (WIDTH, HEIGHT));
@@ -444,9 +477,11 @@ fn one_consent_then_captures_without_asking() {
     screen.capture(Monitors::All).expect("frames");
     assert_eq!(portal.portal().tokens, [None, Some("token-1".to_owned())]);
     assert_eq!(saved(&secrets).as_deref(), Some("token-2"));
-    // A new run of the agent reads the token from the credential store.
+    // A new run of the agent reads the token from the credential store, for the report too.
     drop(screen);
-    capture(&secrets).capture(Monitors::All).expect("frames");
+    let next_run = capture(&secrets);
+    assert_eq!(next_run.consent(), Consent::Granted);
+    next_run.capture(Monitors::All).expect("frames");
     assert_eq!(
         portal.portal().tokens.last().cloned().flatten().as_deref(),
         Some("token-2")
@@ -488,9 +523,16 @@ fn a_member_who_cancels_is_not_asked_again_until_asked_for() {
     ));
     assert_eq!(portal.portal().starts, 1);
     assert_eq!(saved(&secrets), None);
+    assert_eq!(screen.consent(), Consent::Declined);
+    assert_reports(
+        &screen,
+        CapabilityStatus::Denied,
+        &[CapabilityReason::ConsentDeclined],
+    );
 
     portal.portal().member = Member::Shares;
     screen.ask_again();
+    assert_eq!(screen.consent(), Consent::NotAsked);
     assert!(screen.capture(Monitors::All).is_ok());
     assert_eq!(portal.portal().starts, 2);
 }
@@ -509,6 +551,12 @@ fn a_slow_answer_reads_as_waiting_and_counts_once_it_comes() {
         Err(SensorError::PermissionDenied)
     ));
     assert!(started.elapsed() >= ANSWER_WITHIN);
+    assert_eq!(screen.consent(), Consent::Asking);
+    assert_reports(
+        &screen,
+        CapabilityStatus::Pending,
+        &[CapabilityReason::ConsentDialogOpen],
+    );
     // Still waiting for the member: nothing new is asked.
     assert!(matches!(
         screen.capture(Monitors::All),
@@ -517,6 +565,7 @@ fn a_slow_answer_reads_as_waiting_and_counts_once_it_comes() {
     assert_eq!(portal.portal().starts, 1);
     // The member shared: the token is kept, and captures need no dialog.
     wait_for(|| saved(&secrets).is_some(), "the token");
+    assert_eq!(screen.consent(), Consent::Granted);
     let quick = Instant::now();
     assert!(screen.capture(Monitors::All).is_ok());
     assert!(quick.elapsed() < Duration::from_secs(5));
@@ -527,8 +576,37 @@ fn a_slow_answer_reads_as_waiting_and_counts_once_it_comes() {
 fn without_a_portal_capture_is_unsupported() {
     let _turn = serial();
     let secrets = Arc::new(MemorySecretStore::default());
+    // The report says so before any capture.
+    let screen = capture(&secrets);
+    assert_eq!(screen.consent(), Consent::Unsupported);
+    assert_reports(
+        &screen,
+        CapabilityStatus::Unsupported,
+        &[CapabilityReason::NoScreencastPortal],
+    );
     assert!(matches!(
         capture(&secrets).capture(Monitors::All),
         Err(SensorError::Unsupported)
     ));
+}
+
+#[test]
+#[ignore = "needs PipeWire and a session bus"]
+fn a_portal_without_screen_casts_reads_as_unsupported() {
+    let _turn = serial();
+    let portal = StandIn::start(Member::Shares);
+    portal.portal().screencast = false;
+    let secrets = Arc::new(MemorySecretStore::default());
+    assert_eq!(capture(&secrets).consent(), Consent::Unsupported);
+    // A held token means consent, whatever the probe would say.
+    secrets.set(TOKEN_SECRET, "token-9").unwrap();
+    assert_eq!(capture(&secrets).consent(), Consent::Granted);
+}
+
+fn assert_reports(screen: &PortalCapture, status: CapabilityStatus, reasons: &[CapabilityReason]) {
+    let capability = screen.capability();
+    assert_eq!(
+        (capability.status(), capability.reasons()),
+        (status, reasons)
+    );
 }

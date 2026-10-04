@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "main-window",
-  "description": "The IPC allowlist for the main window. Each command added in src/ipc.rs and build.rs needs its allow-<command> permission here; nothing else is callable. The window may listen to events (the agent's AgentChanged), never emit them.",
+  "description": "The IPC allowlist for the main window. Each command added in src/ipc.rs and build.rs needs its allow-<command> permission here; nothing else is callable. The window may listen to events (the agent's AgentChanged and CapabilitiesChanged), never emit them.",
   "windows": ["main"],
   "permissions": [
     "allow-agent-status",
@@ -14,6 +14,7 @@
     "allow-break-start",
     "allow-break-end",
     "allow-idle-answer",
+    "allow-device-capabilities",
     "core:event:allow-listen",
     "core:event:allow-unlisten"
   ]

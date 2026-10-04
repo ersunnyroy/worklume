@@ -834,8 +834,8 @@ only to its allowlisted callers (`docs/spikes/E13-S01-wayland.md`).
   (`org.gnome.Shell.Extensions`) and, if the Shell knows it and it is off, turns it on, as the
   Extensions app would. That happens once per run of the agent: a member who turns it off again
   keeps it off until the agent restarts. While the Shell doesn't answer (it may still be
-  starting), it asks again every 30 seconds. `GnomeWindow::extension` says where it stands, for
-  the capability report (E13-S02).
+  starting), it asks again every 30 seconds. `GnomeWindow::extension` says where it stands, and
+  the capability report uses it (see "Capability report").
 - **Publishing on extensions.gnome.org** (the story's criterion) needs the owner's account:
   upload a zip of `metadata.json` and `extension.js`
   (`gnome-extensions pack src-tauri/linux/gnome-extension/active-window@worklume.com`). The
@@ -854,6 +854,82 @@ only to its allowlisted callers (`docs/spikes/E13-S01-wayland.md`).
   already on at login, readings answered from the first.
 - Not covered: the extension on real hardware, GNOME 47 and 48, X11 windows under Xwayland
   (their class comes through the same way).
+
+## Capability report
+
+E13-S02, the desktop half: the agent works out what it can measure on this device, feature by
+feature, so a member's missing screenshots or apps read as a limit of their desktop instead of
+as gaps (architecture §5, "Capability reporting"). The server half (storing it on the device,
+alerting admins, the "Reduced on Wayland" badges) waits for the API (E07-S06, E07-S07).
+
+**Decision: six statuses and reason codes, not three statuses.** The database notes give
+`devices.capabilities` as "per feature: granted, denied, unsupported". The contract
+(`PUT /v1/desktop/capabilities`, `DesktopCapabilities`) adds:
+
+- `reduced`: measured, less precisely (Wayland activity, estimated from idle notices);
+- `pending`: waiting for the member (the portal's first "Share screen" dialog, the GNOME
+  extension at the next login);
+- `failed`: the reader exists but isn't working.
+
+Each status but `granted` carries at least one reason, from a closed list of codes the
+dashboard and the agent's window put into words (the contract describes each). Without them an
+admin couldn't tell "not asked yet" from "refused" from "this desktop can't". A device is
+reduced when any feature isn't granted, which is how "Wayland: reduced" appears.
+
+**What is reported** (`worklume_platform::CapabilityReport`, `DeviceSensors::report`):
+
+- `platform` as `devices.platform`, `desktop` (gnome, kde, other, from `XDG_CURRENT_DESKTOP`), and
+  six features: screenshots, activity, idle, apps, urls, session_lock. Codes only: no app
+  names, titles, paths or user names, so the report can be logged as it is.
+- **From the readers, not from the platform's name.** Each reader is asked what it reads now:
+  the idle time, the app in front without its title, the lock, the monitors. Input events and
+  active spans are never drained for it; they belong to the timekeeper. Activity follows the
+  reader it comes from: input events (granted), active spans (reduced:
+  `estimated_from_idle`, `no_keyboard_mouse_split`, and `idle_inhibitors_count_as_active` where
+  ext-idle-notify is version 1), or polled idle time (reduced: `idle_time_only`).
+- **Adapters that know better** say so through `CapabilityProbe`:
+  - `PortalCapture` reports its consent: not asked, the dialog open, granted (a token, also one
+    read back from the credential store before any capture), declined, or no screen-cast
+    portal. Whether the portal offers screen casts is asked once, through its `version`
+    property (5 s, since the first call may start the portal).
+  - `GnomeWindow` explains a missing reading with the extension's state: next login, turned
+    off, failed, or no GNOME Shell. A reading may turn the extension on, and GNOME Shell takes
+    a moment to start it, so the probe waits up to 3 s for an extension it just turned on.
+- An adapter that didn't start reports `failed` (`adapter_failed`); an unsupported reading
+  reports `desktop_unsupported` on Linux, `not_implemented` where the OS has no adapter yet
+  (macOS, Windows, browser addresses everywhere until E35), and `no_graphical_session` without
+  X11 or Wayland.
+- A report asked within 1.5 s of the sensors starting waits until then: a compositor's idle
+  reader knows the idle time only after its first timeout, and would read as failing.
+
+**When.** A thread of its own (`worklume-capabilities`) checks once the sensors have started,
+then every minute (so a permission revoked shows within a minute, as E10-S06 asks); the
+readers can take a second (GNOME Shell, the portal), which the ticking thread must not wait for.
+A changed report is logged at info, as codes, and sent to the window
+(`CapabilitiesChanged`, `device_capabilities`). Sync (E09-S05) will send it to the server when
+the agent starts and when it changes; the server accepts at most one a minute per device.
+
+**The window** lists what isn't fully measured under "On this desktop", with a sentence per
+reason (`DeviceLimits`); nothing when everything is.
+
+**Tested.**
+
+- Unit tests: the mapping from readings to statuses for X11, Wayland, failed starts and
+  probes; desktop detection; the GNOME extension states.
+- `platform/tests/portal.rs`: consent not asked, the dialog open, granted (and read back in a
+  new run), declined and asked again, no portal, and a portal without screen casts.
+- `platform/tests/gnome.rs`: the report from the extension's states, including one that starts
+  a moment after being turned on.
+- `platform/tests/x11.rs`: the whole report on Xvfb, without taking the timekeeper's input.
+- `platform/tests/wayland.rs`: the whole report in a sway session (a child process with the
+  session's variables): activity estimated, apps `desktop_unsupported`.
+- `sync/tests/capabilities_fixture.rs` and the contract's `desktop-capabilities.test.js` keep
+  the request body and the contract's code lists in step, both ways.
+- Checked by hand in GNOME Shell 46 (headless) with the `sensors` example: at login screenshots
+  read `pending(consent_not_asked)` from the real portal, apps granted, activity reduced; after
+  a capture that left the dialog up, `pending(consent_dialog_open)`; with the extension off at
+  login, the report turned it on and read apps as granted.
+- Not covered: KDE's portal and Plasma, real hardware, the report reaching the server.
 
 ## Agent UI
 

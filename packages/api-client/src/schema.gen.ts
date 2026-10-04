@@ -79,6 +79,37 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/desktop/capabilities": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Report what the agent can measure on this device
+         * @description The agent sends its capability map when it starts and whenever the map changes; it
+         *     checks once a minute. The map replaces the device's `capabilities`, so a repeated
+         *     report changes nothing. The device is the token's device: the body names none.
+         *
+         *     Each feature has a status and the reasons for it, as codes the dashboard explains in
+         *     the viewer's language. A device whose features are not all `granted` is shown as
+         *     reduced ("Wayland: reduced" for `linux_wayland`), with the reasons, so a member's
+         *     missing screenshots or apps read as a limit of their desktop rather than as gaps.
+         *
+         *     The server alerts the organization's admins when a feature becomes `denied`, and
+         *     ignores a `platform` that differs from the one the device registered with (it logs
+         *     it). At most one report a minute per device; more are refused with 429.
+         */
+        put: operations["putDesktopCapabilities"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -423,6 +454,65 @@ export interface components {
             /** @description Coefficient of variation of the intervals (standard deviation over mean), to 3 decimals. */
             cv: number | null;
         } | null;
+        /** @description What the agent can measure on this device, feature by feature, as its readers find it. It holds codes only: no app names, window titles, paths or user names. */
+        DesktopCapabilities: {
+            /**
+             * @description As `devices.platform`. A Linux agent without an X11 or Wayland session reports `linux_x11`, with `no_graphical_session` on every feature.
+             * @enum {string}
+             */
+            platform: "macos" | "windows" | "linux_x11" | "linux_wayland";
+            /**
+             * @description The Linux desktop, from `XDG_CURRENT_DESKTOP`; absent on macOS and Windows, and when the session doesn't say.
+             * @enum {string}
+             */
+            desktop?: "gnome" | "kde" | "other";
+            features: {
+                screenshots: components["schemas"]["DesktopCapability"];
+                activity: components["schemas"]["DesktopCapability"];
+                idle: components["schemas"]["DesktopCapability"];
+                apps: components["schemas"]["DesktopCapability"];
+                urls: components["schemas"]["DesktopCapability"];
+                session_lock: components["schemas"]["DesktopCapability"];
+            };
+        };
+        /** @description One feature: its status, and why. `granted` comes without reasons; every other status has at least one. */
+        DesktopCapability: {
+            status: components["schemas"]["DesktopCapabilityStatus"];
+            reasons: components["schemas"]["DesktopCapabilityReason"][];
+        };
+        /**
+         * @description - `granted`: measured fully.
+         *     - `reduced`: measured, less precisely than on other desktops.
+         *     - `pending`: waits for the member: a consent not yet given, or the next login.
+         *     - `denied`: the member or the OS refused it.
+         *     - `unsupported`: this desktop, or this version of the agent, can't measure it.
+         *     - `failed`: the reader exists but isn't working.
+         * @enum {string}
+         */
+        DesktopCapabilityStatus: "granted" | "reduced" | "pending" | "denied" | "unsupported" | "failed";
+        /**
+         * @description - `not_implemented`: this version of the agent has no reader for it on this OS.
+         *     - `no_graphical_session`: Linux without an X11 or Wayland session.
+         *     - `adapter_failed`: the reader didn't start, or its last check failed.
+         *     - `permission_denied`: the OS refused the reader a permission.
+         *     - `consent_not_asked`: the desktop asks the member at the first screenshot (Wayland).
+         *     - `consent_dialog_open`: the desktop is asking the member now.
+         *     - `consent_declined`: the member declined screen sharing.
+         *     - `no_screencast_portal`: the desktop offers no screen-cast portal.
+         *     - `estimated_from_idle`: activity comes from the desktop's idle notices, second by
+         *       second, not from input events (Wayland).
+         *     - `idle_time_only`: activity comes from polling the idle time, without input events.
+         *     - `no_keyboard_mouse_split`: one activity figure, not keyboard and mouse apart.
+         *     - `idle_inhibitors_count_as_active`: while a window keeps the screen awake (a video),
+         *       the member counts as active.
+         *     - `gnome_extension_next_login`: the Worklume GNOME Shell extension loads at the
+         *       member's next login.
+         *     - `gnome_extension_disabled`: the member turned the Worklume extension off.
+         *     - `gnome_extension_failed`: GNOME Shell couldn't run the extension.
+         *     - `desktop_unsupported`: this desktop has no interface for it.
+         * @enum {string}
+         */
+        DesktopCapabilityReason: "not_implemented" | "no_graphical_session" | "adapter_failed" | "permission_denied" | "consent_not_asked" | "consent_dialog_open" | "consent_declined" | "no_screencast_portal" | "estimated_from_idle" | "idle_time_only" | "no_keyboard_mouse_split" | "idle_inhibitors_count_as_active" | "gnome_extension_next_login" | "gnome_extension_disabled" | "gnome_extension_failed" | "desktop_unsupported";
     };
     responses: {
         /** @description An error, described as RFC 9457 problem details. */
@@ -540,6 +630,40 @@ export interface operations {
             };
             413: components["responses"]["Problem"];
             422: components["responses"]["Problem"];
+            default: components["responses"]["Problem"];
+        };
+    };
+    putDesktopCapabilities: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DesktopCapabilities"];
+            };
+        };
+        responses: {
+            /** @description The device's capability map was replaced. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            422: components["responses"]["Problem"];
+            /** @description More than one report a minute from this device. */
+            429: {
+                headers: {
+                    "Retry-After": components["headers"]["RetryAfter"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
             default: components["responses"]["Problem"];
         };
     };

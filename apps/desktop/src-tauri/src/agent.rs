@@ -5,6 +5,9 @@
 //! every request from the UI against the catalog, and reports what the member sees. The store
 //! opens on the ticking thread, so a slow or prompting credential store never holds up the
 //! window; until then the agent is [`AgentState::Starting`].
+//!
+//! It also keeps what the device can measure ([`Agent::check_capabilities`], E13-S02), which
+//! a thread of its own checks once a minute: the readers' answers may take a second.
 
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
@@ -18,7 +21,9 @@ use worklume_core::timekeeper::{
 };
 use worklume_core::tracker::{IdleResolution, InputMethod, TrackerConfig, TrackerError};
 use worklume_core::view::{TimerView, timer_view};
-use worklume_platform::{Clock, DeviceSensors, OsClock, OsSecretStore, SecretStore};
+use worklume_platform::{
+    CapabilityReport, Clock, DeviceSensors, OsClock, OsSecretStore, SecretStore,
+};
 use worklume_storage::{StorageError, Store};
 
 use crate::diagnostics::APP_IDENTIFIER;
@@ -100,6 +105,9 @@ struct Running {
     failing: bool,
 }
 
+/// Reports what the device can measure now (`DeviceSensors::report`).
+pub type CapabilitySource = Arc<dyn Fn() -> CapabilityReport + Send + Sync>;
+
 /// The agent. Shared between the IPC commands and the ticking thread.
 pub struct Agent {
     inner: Mutex<Inner>,
@@ -107,6 +115,10 @@ pub struct Agent {
     /// Why the last attempt to open failed, so a retry that fails the same way isn't logged
     /// again.
     open_failure: Mutex<Option<String>>,
+    /// The sensors' report, once they started.
+    capability_source: Mutex<Option<CapabilitySource>>,
+    /// The last report, for the window and, with sync (E09-S05), for the server.
+    capabilities: Mutex<Option<CapabilityReport>>,
 }
 
 /// Why opening failed: what the member is told, and what the log says.
@@ -138,7 +150,38 @@ impl Agent {
             inner: Mutex::new(Inner::Starting),
             day_start,
             open_failure: Mutex::new(None),
+            capability_source: Mutex::new(None),
+            capabilities: Mutex::new(None),
         }
+    }
+
+    /// Where reports of what the device can measure come from: this device's sensors once
+    /// they start, or a stand-in in tests.
+    pub fn set_capability_source(&self, source: CapabilitySource) {
+        *guard(&self.capability_source) = Some(source);
+    }
+
+    /// Asks the sensors what the device can measure now, and keeps the answer. Returns it when
+    /// it differs from the last one (the first one included), for the window, the log and the
+    /// server; `None` when unchanged or when no sensors started yet. It may take a second or
+    /// more (GNOME Shell, the portal), so it never runs on the ticking thread.
+    #[must_use]
+    pub fn check_capabilities(&self) -> Option<CapabilityReport> {
+        let source = guard(&self.capability_source).clone()?;
+        // Asked without any lock held: the window's commands must not wait for the OS.
+        let report = source();
+        let mut last = guard(&self.capabilities);
+        if last.as_ref() == Some(&report) {
+            return None;
+        }
+        *last = Some(report.clone());
+        Some(report)
+    }
+
+    /// The last report of what the device can measure, if one was made.
+    #[must_use]
+    pub fn capabilities(&self) -> Option<CapabilityReport> {
+        guard(&self.capabilities).clone()
     }
 
     /// Opens the store in `dir` and the timekeeper on `sensors`, whose input is measured as
@@ -174,7 +217,19 @@ impl Agent {
     /// As [`Agent::open`].
     pub fn open_on_this_device(&self) -> Result<(), Unavailable> {
         match this_device() {
-            Ok((dir, secrets, sensors, input_method)) => {
+            Ok((dir, secrets, device, input_method)) => {
+                let sensors = Sensors {
+                    clock: Arc::clone(&device.clock),
+                    idle: Arc::clone(&device.sensors.idle),
+                    window: Arc::clone(&device.sensors.window),
+                    browser: Arc::clone(&device.sensors.browser),
+                    input: Arc::clone(&device.sensors.input),
+                    spans: Arc::clone(&device.sensors.spans),
+                    lock: Arc::clone(&device.sensors.lock),
+                };
+                // The newest sensors report, also while the store can't open: what the device
+                // can measure doesn't depend on it.
+                self.set_capability_source(Arc::new(move || device.sensors.report()));
                 self.open(&dir, &*secrets, sensors, input_method)
             }
             Err(failure) => self.settle(Err(failure)),
@@ -404,8 +459,14 @@ impl Running {
     }
 }
 
+/// This device's clock and started sensors.
+struct Device {
+    clock: Arc<dyn Clock>,
+    sensors: DeviceSensors,
+}
+
 /// This device's store folder, credential store and sensors, and how its input is measured.
-fn this_device() -> Result<(PathBuf, Arc<OsSecretStore>, Sensors, InputMethod), OpenFailure> {
+fn this_device() -> Result<(PathBuf, Arc<OsSecretStore>, Device, InputMethod), OpenFailure> {
     let dir = store_dir().ok_or_else(|| {
         OpenFailure::new(
             Unavailable::NoDataFolder,
@@ -438,16 +499,11 @@ fn this_device() -> Result<(PathBuf, Arc<OsSecretStore>, Sensors, InputMethod), 
     } else {
         InputMethod::IdlePoll
     };
-    let sensors = Sensors {
+    let device = Device {
         clock,
-        idle: device.idle,
-        window: device.window,
-        browser: device.browser,
-        input: device.input,
-        spans: device.spans,
-        lock: device.lock,
+        sensors: device,
     };
-    Ok((dir, secrets, sensors, input_method))
+    Ok((dir, secrets, device, input_method))
 }
 
 fn open_keeper(
@@ -488,6 +544,10 @@ fn open_keeper(
         );
     }
     Ok(keeper)
+}
+
+fn guard<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
+    mutex.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
 /// Refused as not possible now when the tracker says so; anything else failed, and is logged.

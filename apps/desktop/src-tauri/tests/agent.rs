@@ -1,6 +1,7 @@
 //! The agent runtime (E09-S09) on fake sensors: timer requests are checked against the catalog,
 //! the timer runs through it, a question brings the window forward, and a store that can't
-//! open leaves it unavailable rather than broken.
+//! open leaves it unavailable rather than broken. What the device can measure is kept, and
+//! reported when it changes (E13-S02).
 
 #![allow(
     clippy::expect_used,
@@ -8,7 +9,7 @@
     reason = "test setup failures should fail loudly"
 )]
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use tempfile::TempDir;
@@ -18,7 +19,11 @@ use worklume_core::timekeeper::{IdlePolicy, KeepIdle, Sensors};
 use worklume_core::tracker::InputMethod;
 use worklume_core::view::{Question, TimerStatus};
 use worklume_desktop::agent::{Agent, AgentError, AgentState, IdleAnswer, Unavailable};
-use worklume_platform::Unsupported;
+use worklume_platform::{
+    Capability, CapabilityReason, CapabilityReport, CapabilityStatus, Feature, LinuxDesktop,
+    ReportedPlatform, Unsupported,
+};
+
 use worklume_platform::fake::{
     FakeBrowser, FakeClock, FakeIdle, FakeInput, FakeLock, FakeWindow, MemorySecretStore,
 };
@@ -320,4 +325,50 @@ fn the_timer_carries_on_after_the_agent_restarts() {
         timer.today >= Duration::from_secs(30),
         "saved at the 30-second heartbeat"
     );
+}
+
+/// A GNOME Wayland report whose screenshots are `screenshots`.
+fn gnome_report(screenshots: &Capability) -> CapabilityReport {
+    CapabilityReport::new(
+        ReportedPlatform::LinuxWayland,
+        Some(LinuxDesktop::Gnome),
+        |feature| match feature {
+            Feature::Screenshots => screenshots.clone(),
+            _ => Capability::granted(),
+        },
+    )
+}
+
+#[test]
+fn what_the_device_can_measure_is_kept_and_reported_when_it_changes() {
+    let device = Device::new();
+    // No sensors yet: nothing to report.
+    assert_eq!(device.agent.check_capabilities(), None);
+    assert_eq!(device.agent.capabilities(), None);
+
+    let pending = Capability::limited(
+        CapabilityStatus::Pending,
+        CapabilityReason::ConsentNotAsked,
+        &[],
+    );
+    let current = Arc::new(Mutex::new(gnome_report(&pending)));
+    device.agent.set_capability_source(Arc::new({
+        let current = Arc::clone(&current);
+        move || current.lock().expect("the report").clone()
+    }));
+    // The first report is a change; the same again is not.
+    let first = device.agent.check_capabilities().expect("the first report");
+    assert_eq!(
+        first.get(Feature::Screenshots).status(),
+        CapabilityStatus::Pending
+    );
+    assert_eq!(device.agent.check_capabilities(), None);
+    assert_eq!(device.agent.capabilities(), Some(first));
+
+    // The member shares the screen.
+    *current.lock().expect("the report") = gnome_report(&Capability::granted());
+    let granted = device.agent.check_capabilities().expect("a change");
+    assert!(!granted.is_reduced());
+    assert_eq!(device.agent.capabilities(), Some(granted));
+    assert_eq!(device.agent.check_capabilities(), None);
 }

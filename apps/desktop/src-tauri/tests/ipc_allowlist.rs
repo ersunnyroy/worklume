@@ -191,6 +191,16 @@ fn assert_allowed(window: &WebviewWindow<MockRuntime>, command: &str) {
 }
 
 #[test]
+fn the_main_window_may_read_what_the_device_can_measure() {
+    let dir = TempDir::new().expect("temporary folder");
+    let app = app(&dir);
+    let main = window(&app, MAIN_WINDOW);
+    let response = invoke(&main, "device_capabilities").expect("device_capabilities is allowed");
+    // Not checked yet in this app: the thread that checks isn't running.
+    assert_eq!(json_of(&response), Value::Null);
+}
+
+#[test]
 fn the_main_window_may_listen_to_events_but_not_emit_them() {
     let dir = TempDir::new().expect("temporary folder");
     let app = app(&dir);
@@ -238,6 +248,7 @@ fn other_windows_may_not_call_anything() {
         "break_start",
         "break_end",
         "idle_answer",
+        "device_capabilities",
         "plugin:event|listen",
     ] {
         assert_refused(&other, command);

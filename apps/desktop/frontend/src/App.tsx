@@ -1,13 +1,19 @@
 import { useTranslation } from 'react-i18next';
 import { About } from './About';
+import { DeviceLimits } from './DeviceLimits';
 import { useAgent } from './ipc/use-agent';
+import { useDeviceCapabilities } from './ipc/use-device-capabilities';
 import { TimerScreen } from './timer/TimerScreen';
 import { Unavailable } from './Unavailable';
 
-/** The agent's window: the timer, or why there is none yet, and the about section. */
+/**
+ * The agent's window: the timer, or why there is none yet; what this desktop doesn't let it
+ * measure fully; and the about section.
+ */
 export function App() {
   const { t } = useTranslation();
   const agent = useAgent();
+  const capabilities = useDeviceCapabilities();
   const { state } = agent;
 
   return (
@@ -28,6 +34,7 @@ export function App() {
             run={agent.run}
           />
         )}
+        <DeviceLimits capabilities={capabilities} />
       </main>
       <About />
     </div>
