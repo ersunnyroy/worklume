@@ -748,6 +748,58 @@ event meter counts. Both adapters implement `IdleSource` and `ActivitySpans`:
   time to the millisecond on GNOME. The example prints only times.
 - Not covered: real hardware and GPUs, Plasma 6, GNOME 47 and later.
 
+## Wayland screen capture
+
+E13-S03: `linux::PortalCapture`, the `ScreenCapture` for Wayland sessions, through the desktop
+portal's ScreenCast interface and PipeWire. Wayland lets no app read the screen.
+
+- **Not the Screenshot portal** (the backlog's first idea): on GNOME it flashes the screen,
+  plays the shutter sound, blocks input for half a second and saves a PNG into the member's
+  Pictures folder on every capture, and wlroots' backend writes `/tmp/out.png` for anyone to
+  read (`docs/spikes/E13-S01-wayland.md`).
+- **One consent.** Without a restore token, a capture shows the desktop's "Share screen" dialog,
+  asking for every monitor (`multiple`) and to remember the choice (`persist_mode` 2, until
+  revoked). The restore token that comes back lets its holder record the screen without asking,
+  so it is a secret: it is kept in the OS credential store (`screencast-restore-token`, through
+  `DeviceSensors::start`'s `SecretStore`), never in logs or `Debug`. Each session returns a new
+  token, and the newest is kept.
+- **Waiting for the member.** A capture waits up to 10 s (`ANSWER_WITHIN`); past that it reads
+  `PermissionDenied` while the dialog stays up for up to 10 minutes, and a later capture works
+  once the member has shared. A member who cancels, or leaves the dialog unanswered that long,
+  isn't asked again until `PortalCapture::ask_again` (a button in the agent's UI, later); the
+  token is forgotten.
+- **Each capture** opens a session, takes one frame from each shared monitor's stream, and closes
+  the session, which ends the screen sharing. GNOME's indicator blinks for the moment it is
+  open. Frames are asked for in shared memory, in `BGRx`, `RGBx`, `BGRA` or `RGBA`, never as GPU
+  buffers; rows are copied by their stride into RGBA, and the copies are wiped when dropped.
+  PipeWire runs on the capture's own thread, in a main loop of its own.
+- **Monitors** are the streams' positions and sizes. Wayland doesn't say which monitor the member
+  is using: `Monitors::Active` takes the first one shared.
+- **Dependency:** the `pipewire` crate (bindings to the system `libpipewire-0.3`, built with
+  bindgen, so building needs `libpipewire-0.3-dev` and `libclang`). The `.deb` depends on
+  `libpipewire-0.3-0` (24.04's `…-0t64` provides it), the `.rpm` on `pipewire-libs`; GNOME and
+  KDE desktops have it already. The `dbus` crate gains its `stdfd` feature, to pass PipeWire's
+  file descriptor.
+
+Nothing captures yet: the screenshot pipeline (E09-S07) decides when, and shows the consent
+first. Until then the dialog appears only when something captures.
+
+**Tested.**
+
+- Unit tests: each pixel format to RGBA, row padding, short frames; the streams in Start's
+  answer, through a real D-Bus message.
+- `platform/tests/portal.rs` runs against a stand-in portal sharing a real PipeWire test source
+  (`videotestsrc`, a solid colour): the first capture's frames, with the source's colour, and the
+  token kept; the next capture restoring from it, and a new run reading it from the store; every
+  monitor and "until revoked" asked for; every session closed; the active monitor; a member who
+  cancels; an answer slower than 10 s; no portal.
+- Checked by hand on GNOME Shell 46 (nested in Xvfb) with xdg-desktop-portal-gnome:
+  `cargo run -p worklume-platform --example sensors -- 1 capture` showed the dialog once (the
+  click answered it in 4.9 s), then two more captures took 126 ms each with no dialog; the frame
+  showed the desktop in the right colours.
+- Not covered: KDE's portal (KWin couldn't capture without a GPU in the spike), several real
+  monitors, a monitor plugged in later (a new consent), real hardware.
+
 ## GNOME active window
 
 E13-S05: on GNOME under Wayland the window in front comes from a GNOME Shell extension of ours,
@@ -1050,6 +1102,9 @@ What the `.deb` installs (checked on a build, E12-S05):
 --autostart`;
 - `/usr/share/gnome-shell/extensions/active-window@worklume.com/` (E13-S05; the `.rpm` too):
   the GNOME extension, from `src-tauri/linux/gnome-extension`.
+
+The `.deb` also depends on `libpipewire-0.3-0` and the `.rpm` on `pipewire-libs`, for Wayland
+screen capture (E13-S03).
 
 The package metadata (maintainer, long description) and the apt repository are E12-S06's.
 
