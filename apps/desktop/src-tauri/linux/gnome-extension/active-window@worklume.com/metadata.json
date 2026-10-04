@@ -1,0 +1,8 @@
+{
+  "uuid": "active-window@worklume.com",
+  "name": "Worklume active window",
+  "description": "Tells the Worklume time tracker which app is in front, and its window title when the organization keeps titles. Only the installed Worklume agent may ask; nothing is sent anywhere by this extension.",
+  "shell-version": ["45", "46", "47", "48"],
+  "url": "https://github.com/ersunnyroy/worklume",
+  "version-name": "1.0"
+}

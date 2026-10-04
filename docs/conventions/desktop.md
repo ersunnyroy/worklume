@@ -713,6 +713,9 @@ event meter counts. Both adapters implement `IdleSource` and `ActivitySpans`:
     reported on the next reading.
   - All calls happen on the reader's thread, with a 5 s timeout and three tries: at login the
     Shell took over half a second to answer. Idle time is unknown until the watches are set.
+  - In a GNOME session (`XDG_CURRENT_DESKTOP` names GNOME) the reader waits up to 30 s for
+    Mutter to appear on the bus, since the agent can start before the Shell has: started a
+    moment too early, the agent otherwise had no idle time for the whole session.
 - **`linux::WaylandIdle`** (KDE, wlroots and others): `ext-idle-notify-v1` through
   `wayland-client`, pure Rust, so no `libwayland` is linked.
   - Version 2's input notification, which ignores idle inhibitors, when the compositor has it.
@@ -744,6 +747,61 @@ event meter counts. Both adapters implement `IdleSource` and `ActivitySpans`:
   (nested) and KWin 5.27: a 1.2 s burst gave a 2.2 s span, a single key a 1 s span, and idle
   time to the millisecond on GNOME. The example prints only times.
 - Not covered: real hardware and GPUs, Plasma 6, GNOME 47 and later.
+
+## GNOME active window
+
+E13-S05: on GNOME under Wayland the window in front comes from a GNOME Shell extension of ours,
+because Wayland gives apps no way to know, and GNOME Shell answers its own `Introspect` interface
+only to its allowlisted callers (`docs/spikes/E13-S01-wayland.md`).
+
+**The extension** (`src-tauri/linux/gnome-extension/active-window@worklume.com`, GNOME 45 to
+48, so Ubuntu 24.04's 46):
+
+- owns `com.worklume.ActiveWindow` on the session bus and answers one method,
+  `com.worklume.ActiveWindow1.Get(with_title) → (app_id, wm_class, pid, title)`: the Shell's
+  desktop-file ID for the window when it has one, the Wayland app ID or X11 class, the process
+  ID and, only when asked for, the title. Empty values and 0 mean nothing is in front (as while
+  the overview shows at login);
+- sends no signals, which would reach every client on the bus: the agent asks once a second;
+- answers only the installed agent: the executable behind the caller's process (from
+  `GetConnectionUnixProcessID` and `/proc`) must be `/usr/bin/worklume-desktop`, also while an
+  update has replaced it (`… (deleted)`). Anything else gets `AccessDenied`. Code running as the
+  same user can do worse, so this is defence in depth; it keeps other apps and sandboxed ones
+  from reading what the member does;
+- keeps nothing and sends nothing anywhere.
+
+**The reader** (`linux::GnomeWindow`, the `ActiveWindow` for GNOME Wayland sessions):
+
+- One D-Bus call per reading, with a 250 ms timeout, reconnecting after a failure.
+- The app is resolved from the desktop entries as on X11: the Shell's ID, then the Wayland app
+  ID (meant to be the desktop-file ID), then the executable; without an entry, the class names
+  the app, then the executable. Each app found is kept.
+- The extension not running reads `Unsupported`; refusing, `PermissionDenied`.
+- **Turning it on.** The packages install the extension system-wide, and GNOME Shell finds it at
+  the member's next login. The first reading that finds it not running asks GNOME Shell
+  (`org.gnome.Shell.Extensions`) and, if the Shell knows it and it is off, turns it on, as the
+  Extensions app would. That happens once per run of the agent: a member who turns it off again
+  keeps it off until the agent restarts. While the Shell doesn't answer (it may still be
+  starting), it asks again every 30 seconds. `GnomeWindow::extension` says where it stands, for
+  the capability report (E13-S02).
+- **Publishing on extensions.gnome.org** (the story's criterion) needs the owner's account:
+  upload a zip of `metadata.json` and `extension.js`
+  (`gnome-extensions pack src-tauri/linux/gnome-extension/active-window@worklume.com`). The
+  packaged copy works without it.
+
+**Tested.**
+
+- `platform/tests/gnome.rs` runs against stand-ins for the extension and the Shell's extensions
+  service: the app from the Shell's ID, the Wayland app ID, the executable and the class; the
+  title only when asked; nothing in front; not running and refusing; the extension's states;
+  and a reading turning it on once.
+- Checked by hand in GNOME Shell 46 (nested in Xvfb) with the packaged extension, its allowlist
+  pointed at the `sensors` example: the first reading turned the extension on and the next ones
+  answered; two GTK windows came out as `org.example.Editor` (from its entry) and
+  `com.example.other` (no entry, named by its class); `gdbus` was refused; with the extension
+  already on at login, readings answered from the first.
+- Not covered: the extension on real hardware, GNOME 47 and 48, X11 windows under Xwayland
+  (their class comes through the same way).
 
 ## Agent UI
 
@@ -989,7 +1047,9 @@ What the `.deb` installs (checked on a build, E12-S05):
 - icons under `/usr/share/icons/hicolor`, named `worklume-desktop`;
 - `/etc/xdg/autostart/com.worklume.agent.desktop` (E12-S05; the `.rpm` too), from
   `src-tauri/linux/com.worklume.agent.autostart.desktop`: `Exec=/usr/bin/worklume-desktop
---autostart`.
+--autostart`;
+- `/usr/share/gnome-shell/extensions/active-window@worklume.com/` (E13-S05; the `.rpm` too):
+  the GNOME extension, from `src-tauri/linux/gnome-extension`.
 
 The package metadata (maintainer, long description) and the apt repository are E12-S06's.
 

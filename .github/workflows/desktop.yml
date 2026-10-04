@@ -162,7 +162,7 @@ jobs:
 
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
 
-      - name: Test the Wayland idle readers (sway and a stand-in Mutter)
+      - name: Test the Wayland readers (sway, and stand-ins for Mutter and the GNOME extension)
         run: >-
           dbus-run-session -- cargo test -p worklume-platform --features fake --test wayland
-          --test mutter --locked -- --ignored
+          --test mutter --test gnome --locked -- --ignored

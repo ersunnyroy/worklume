@@ -2,7 +2,8 @@
 //!
 //! - X11 (`x11`): idle time, input events, the window in front and screen capture.
 //! - Wayland: idle time and active spans from `ext-idle-notify-v1` (`wayland`: KDE, wlroots
-//!   and others) or from Mutter's `IdleMonitor` (`mutter`: GNOME).
+//!   and others) or from Mutter's `IdleMonitor` (`mutter`: GNOME); on GNOME, the window in front
+//!   from the Worklume Shell extension (`gnome`).
 //! - Both: which installed app a window belongs to (`desktop`); whether the session is locked,
 //!   from logind or the screen saver service (`lock`); and the XDG autostart entry
 //!   (`autostart`).
@@ -11,7 +12,9 @@
 //! `docs/spikes/E13-S01-wayland.md`.
 
 mod autostart;
+mod bus;
 mod desktop;
+mod gnome;
 mod lock;
 mod mutter;
 mod wayland;
@@ -19,6 +22,7 @@ mod x11;
 
 pub use autostart::{ENTRY_NAME, XdgAutostart};
 pub use desktop::{App, DesktopFiles, Hints};
+pub use gnome::{EXTENSION_UUID, ExtensionState, GnomeWindow};
 pub use lock::LinuxSessionLock;
 pub use mutter::MutterIdle;
 pub use wayland::WaylandIdle;
