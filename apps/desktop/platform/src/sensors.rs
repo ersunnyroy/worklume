@@ -6,7 +6,8 @@
 //!   Wayland).
 //! - Linux Wayland: idle time and active spans (E13-S04), from Mutter's `IdleMonitor` on GNOME,
 //!   else from `ext-idle-notify-v1`; on GNOME, the window in front from the Worklume extension
-//!   (E13-S05), which the agent turns on; screen capture through the desktop portal (E13-S03),
+//!   (E13-S05), which the agent turns on; on KDE, from KWin's Plasma window management (E13-S06),
+//!   granted through the agent's desktop entry; screen capture through the desktop portal (E13-S03),
 //!   the restore token kept in the credential store. Never the X11 adapters, though `DISPLAY` is set for
 //!   Xwayland: through it they would see only X11 apps.
 //! - Everything else waits for its story: browser addresses (E12-S04 with E35, E10-S04,
@@ -275,6 +276,33 @@ impl DeviceSensors {
                 self.fail(Feature::Idle, format!("idle time on Wayland: {error}"));
             }
         }
+        if self.platform.linux_desktop == Some(LinuxDesktop::Kde) {
+            self.start_kde_window();
+        }
+    }
+
+    /// KDE's window in front, from KWin's Plasma window management, which KWin grants through
+    /// the agent's desktop entry (see `linux::PlasmaWindow`).
+    #[cfg(target_os = "linux")]
+    fn start_kde_window(&mut self) {
+        use crate::SensorError;
+        match crate::linux::PlasmaWindow::connect() {
+            Ok(window) => self.window = Arc::new(window),
+            Err(SensorError::Unsupported) => {
+                // KWin hides the protocol from an executable its desktop entry doesn't grant it
+                // to: an agent not installed from the packages.
+                self.window = Arc::new(NotGranted);
+                self.problems.push(
+                    "the window in front: KWin didn't grant Plasma window management; the \
+                     agent's desktop entry isn't installed"
+                        .to_owned(),
+                );
+            }
+            Err(error) => self.fail(
+                Feature::Apps,
+                format!("the window in front on KDE: {error}"),
+            ),
+        }
     }
 
     /// GNOME's window in front, from the Worklume extension, which the reader turns on once
@@ -300,6 +328,19 @@ impl DeviceSensors {
         reason = "the macOS and Windows adapters arrive with E10 and E11"
     )]
     fn start_os(&mut self, _clock: &Arc<dyn Clock>, _secrets: &Arc<dyn SecretStore>) {}
+}
+
+/// The window in front where the compositor withheld the interface for it: a refused
+/// permission, which the capability report shows as such.
+#[cfg(target_os = "linux")]
+#[derive(Debug)]
+struct NotGranted;
+
+#[cfg(target_os = "linux")]
+impl ActiveWindow for NotGranted {
+    fn foreground(&self, _with_title: bool) -> Result<Option<ForegroundApp>, crate::SensorError> {
+        Err(crate::SensorError::PermissionDenied)
+    }
 }
 
 impl std::fmt::Debug for DeviceSensors {

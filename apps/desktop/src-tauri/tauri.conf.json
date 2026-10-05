@@ -41,6 +41,7 @@
     "linux": {
       "deb": {
         "depends": ["libpipewire-0.3-0"],
+        "desktopTemplate": "linux/worklume.desktop.hbs",
         "files": {
           "/etc/xdg/autostart/com.worklume.agent.desktop": "linux/com.worklume.agent.autostart.desktop",
           "/usr/share/gnome-shell/extensions/active-window@worklume.com/metadata.json": "linux/gnome-extension/active-window@worklume.com/metadata.json",
@@ -49,6 +50,7 @@
       },
       "rpm": {
         "depends": ["pipewire-libs"],
+        "desktopTemplate": "linux/worklume.desktop.hbs",
         "files": {
           "/etc/xdg/autostart/com.worklume.agent.desktop": "linux/com.worklume.agent.autostart.desktop",
           "/usr/share/gnome-shell/extensions/active-window@worklume.com/metadata.json": "linux/gnome-extension/active-window@worklume.com/metadata.json",

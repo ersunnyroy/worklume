@@ -19,7 +19,6 @@
 //! - The extension answers only the installed agent: anything else reads `PermissionDenied`.
 //! - Each reading is one D-Bus call with a 250 ms timeout. A failed call reconnects on the next.
 
-use std::collections::HashMap;
 use std::fmt;
 use std::path::PathBuf;
 use std::sync::{Mutex, MutexGuard, PoisonError};
@@ -28,8 +27,9 @@ use std::time::{Duration, Instant};
 use dbus::arg::{PropMap, RefArg};
 use dbus::blocking::Connection;
 
+use super::apps::AppResolver;
 use super::bus::{ABSENT, Bus};
-use crate::linux::desktop::{App, DesktopFiles, Hints};
+use crate::linux::desktop::DesktopFiles;
 use crate::{
     ActiveWindow, Capability, CapabilityProbe, CapabilityReason, CapabilityStatus, ForegroundApp,
     SensorError,
@@ -55,10 +55,6 @@ const RETRY_EVERY: Duration = Duration::from_secs(30);
 const STARTING_WITHIN: Duration = Duration::from_secs(3);
 /// How often to ask again meanwhile.
 const STARTING_POLL: Duration = Duration::from_millis(100);
-/// How often the entries may be read again for an app no entry matched.
-const RELOAD_EVERY: Duration = Duration::from_mins(5);
-/// Apps kept; beyond it the cache starts again.
-const MAX_CACHED: usize = 512;
 
 /// Where the extension stands, as GNOME Shell says.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -76,7 +72,7 @@ pub enum ExtensionState {
 /// The window in front, from the Worklume GNOME Shell extension. See the module documentation.
 pub struct GnomeWindow {
     bus: Mutex<Bus>,
-    apps: Mutex<Apps>,
+    apps: AppResolver,
     enabling: Mutex<Enabling>,
 }
 
@@ -87,14 +83,6 @@ struct Enabling {
     tried: Option<Instant>,
     /// When GNOME Shell said it turned the extension on.
     enabled: Option<Instant>,
-}
-
-struct Apps {
-    files: DesktopFiles,
-    dirs: Vec<PathBuf>,
-    loaded: Instant,
-    /// Each app found, by what the extension said and the executable.
-    known: HashMap<(String, String, Option<String>), App>,
 }
 
 impl GnomeWindow {
@@ -110,12 +98,7 @@ impl GnomeWindow {
     pub fn with_dirs(application_dirs: Vec<PathBuf>) -> Self {
         Self {
             bus: Mutex::new(Bus::new(Box::new(Connection::new_session))),
-            apps: Mutex::new(Apps {
-                files: DesktopFiles::load(&application_dirs),
-                dirs: application_dirs,
-                loaded: Instant::now(),
-                known: HashMap::new(),
-            }),
+            apps: AppResolver::new(application_dirs),
             enabling: Mutex::new(Enabling::default()),
         }
     }
@@ -190,52 +173,6 @@ impl GnomeWindow {
             Err(_) => {}
         }
     }
-
-    /// The app of a window the extension described.
-    fn identify(&self, shell_id: &str, wm_class: &str, pid: u32) -> Option<App> {
-        let program = (pid > 0)
-            .then(|| std::fs::read_link(format!("/proc/{pid}/exe")).ok())
-            .flatten()
-            .and_then(|exe| Some(exe.file_name()?.to_string_lossy().into_owned()));
-        let key = (shell_id.to_owned(), wm_class.to_owned(), program.clone());
-        let mut apps = lock(&self.apps);
-        if let Some(app) = apps.known.get(&key) {
-            return Some(app.clone());
-        }
-        let nonempty = |text: &str| (!text.is_empty()).then(|| text.to_owned());
-        let (shell_id, wm_class) = (nonempty(shell_id), nonempty(wm_class));
-        // On Wayland the window's app ID is meant to be its desktop-file ID.
-        let hints = Hints {
-            app_id: shell_id.as_deref().or(wm_class.as_deref()),
-            class: wm_class.as_deref(),
-            instance: None,
-            program: program.as_deref(),
-        };
-        let mut app = apps.files.resolve(&hints);
-        if app.is_none() && apps.loaded.elapsed() >= RELOAD_EVERY {
-            apps.files = DesktopFiles::load(&apps.dirs);
-            apps.loaded = Instant::now();
-            app = apps.files.resolve(&hints);
-        }
-        let app = app
-            .or_else(|| {
-                wm_class.map(|class| App {
-                    identifier: class.to_lowercase(),
-                    name: class,
-                })
-            })
-            .or_else(|| {
-                program.map(|program| App {
-                    identifier: program.to_lowercase(),
-                    name: program,
-                })
-            })?;
-        if apps.known.len() >= MAX_CACHED {
-            apps.known.clear();
-        }
-        apps.known.insert(key, app.clone());
-        Some(app)
-    }
 }
 
 impl Default for GnomeWindow {
@@ -261,7 +198,7 @@ impl ActiveWindow for GnomeWindow {
         if shell_id.is_empty() && wm_class.is_empty() && pid == 0 {
             return Ok(None);
         }
-        let Some(app) = self.identify(&shell_id, &wm_class, pid) else {
+        let Some(app) = self.apps.identify(&shell_id, &wm_class, pid) else {
             return Err(SensorError::Failed(
                 "the window in front names no application".to_owned(),
             ));
