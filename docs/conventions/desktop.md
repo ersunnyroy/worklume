@@ -576,7 +576,7 @@ of 11 caught.
 
 ## Linux sensors
 
-E12-S03 and E12-S04, after the spike in `docs/spikes/E12-S01-x11.md`.
+E12-S02 to E12-S04, after the spike in `docs/spikes/E12-S01-x11.md`.
 `worklume-platform::linux`:
 
 - **`X11Idle`**: the MIT-SCREEN-SAVER extension's `ms_since_user_input`, under 0.3 ms a
@@ -620,13 +620,28 @@ E12-S03 and E12-S04, after the spike in `docs/spikes/E12-S01-x11.md`.
     Chromium.
   - Browser addresses on X11 wait on the decision about the browser extension (E35); see the
     spike.
+- **`X11Capture`** (E12-S02): screenshots through the `ScreenCapture` trait, one RGBA frame per
+  monitor, for the screenshot pipeline (E09-S07).
+  - Monitors come from `RandR` 1.5 `GetMonitors`. Without it, the whole screen is one monitor.
+  - `distinct_monitors` leaves out a monitor that merely spans others (Xvfb keeps one over the
+    whole screen, and so can a split ultrawide) and counts mirrored monitors once.
+  - `Monitors::Active` captures the monitor under the pointer, else the primary one.
+  - Pixels are converted from the root visual to RGBA: any `TrueColor` format of 32 bits a
+    pixel, either byte order, channels of any width (10-bit colour included). Other formats
+    read as `Unsupported`.
+  - Frames wipe their buffers when dropped, and so does the server's copy once converted. A
+    frame's `Debug` shows no pixels.
+  - **Decision: `GetImage`, not MIT-SHM** as the spike suggested. Shared memory is about ten
+    times faster, but a 1080p capture with conversion takes 37 ms, and screenshots come at
+    most a few times per 10 minutes. Shared memory would need `unsafe` code to map the
+    segment.
 - **`LinuxSessionLock`** (X11 and Wayland alike): logind's `LockedHint` on
   `/org/freedesktop/login1/session/auto`, the caller's own session or the member's graphical
   one, falling back to `org.freedesktop.ScreenSaver` or `org.gnome.ScreenSaver` `GetActive` on
   the session bus. One D-Bus call per reading, with a 250 ms timeout; a failed call reconnects
   on the next reading. No service at all reads as `Unsupported`.
 - **`DeviceSensors::start`** picks the adapters for this session: on Linux the lock always, and
-  on X11 idle time, input and the window in front too. What fails to start is logged once per attempt and reads as
+  on X11 idle time, input, the window in front and screen capture too. What fails to start is logged once per attempt and reads as
   `Unsupported`, and the agent tracks without it.
 
 **Decision: the `dbus` crate, not `zbus`.** The architecture names `zbus` for the Linux
@@ -646,7 +661,10 @@ remains the choice if the Wayland work (E13) needs async D-Bus or portals.
   manager, creating windows and setting `_NET_ACTIVE_WINDOW` themselves: the app from its
   entry, the toolkit's ID and the executable, the class without an entry, a Latin-1 title, a
   title only when asked, a window whose class changes, nothing in front, and no EWMH. A path in
-  the instance never comes out. The tests keep one connection open
+  the instance never comes out. The capture test splits the screen into two `RandR` monitors
+  of different sizes (800×600 and 480×1024), each painted a colour of its own. It checks that
+  each frame has its monitor's size and colour, that Xvfb's screen-wide monitor is left out,
+  and that the active monitor follows the pointer (E12-S02's acceptance criterion). The tests keep one connection open
   throughout, because Xvfb resets when its last client leaves and refuses connections while it
   does.
 - The lock is tested against stand-in logind and screen saver services on a private session

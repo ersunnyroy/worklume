@@ -6,8 +6,9 @@
 use std::time::Duration;
 
 use crate::{
-    ActiveWindow, Autostart, AutostartError, BrowserTab, BrowserUrl, ForegroundApp, IdleError,
-    IdleSource, InputActivity, InputEvent, SensorError, SessionLock,
+    ActiveWindow, Autostart, AutostartError, BrowserTab, BrowserUrl, ForegroundApp, Frame,
+    IdleError, IdleSource, InputActivity, InputEvent, Monitor, Monitors, ScreenCapture,
+    SensorError, SessionLock,
 };
 
 /// A sensor that cannot read anything in this build.
@@ -44,6 +45,16 @@ impl SessionLock for Unsupported {
     }
 }
 
+impl ScreenCapture for Unsupported {
+    fn monitors(&self) -> Result<Vec<Monitor>, SensorError> {
+        Err(SensorError::Unsupported)
+    }
+
+    fn capture(&self, _which: Monitors) -> Result<Vec<Frame>, SensorError> {
+        Err(SensorError::Unsupported)
+    }
+}
+
 impl Autostart for Unsupported {
     fn enabled(&self) -> Result<bool, AutostartError> {
         Err(AutostartError::Unsupported)
@@ -59,7 +70,7 @@ mod tests {
     use super::Unsupported;
     use crate::{
         ActiveWindow, Autostart, AutostartError, BrowserUrl, ForegroundApp, IdleError, IdleSource,
-        InputActivity, SensorError, SessionLock,
+        InputActivity, Monitors, ScreenCapture, SensorError, SessionLock,
     };
 
     #[test]
@@ -75,6 +86,11 @@ mod tests {
         assert_eq!(Unsupported.drain(), Err(SensorError::Unsupported));
         assert_eq!(Unsupported.locked(), Err(SensorError::Unsupported));
         assert_eq!(Unsupported.enabled(), Err(AutostartError::Unsupported));
+        assert_eq!(Unsupported.monitors(), Err(SensorError::Unsupported));
+        assert!(matches!(
+            Unsupported.capture(Monitors::All),
+            Err(SensorError::Unsupported)
+        ));
         assert_eq!(
             Unsupported.set_enabled(true),
             Err(AutostartError::Unsupported)

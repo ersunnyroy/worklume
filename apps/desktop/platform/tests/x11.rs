@@ -13,13 +13,14 @@ use std::time::{Duration, Instant};
 
 use std::path::PathBuf;
 
-use worklume_platform::linux::{X11Idle, X11Input, X11Window};
+use worklume_platform::linux::{X11Capture, X11Idle, X11Input, X11Window};
 use worklume_platform::{
-    ActiveWindow, Clock, DeviceSensors, ForegroundApp, IdleSource, InputActivity, InputEvent,
-    InputKind, OsClock, SensorError,
+    ActiveWindow, Clock, DeviceSensors, ForegroundApp, Frame, IdleSource, InputActivity,
+    InputEvent, InputKind, Monitors, OsClock, ScreenCapture, SensorError,
 };
 use x11rb::COPY_DEPTH_FROM_PARENT;
 use x11rb::connection::Connection;
+use x11rb::protocol::randr::{self, ConnectionExt as _};
 use x11rb::protocol::xproto::{
     AtomEnum, BUTTON_PRESS_EVENT, BUTTON_RELEASE_EVENT, ConnectionExt as _, CreateWindowAux,
     GrabMode, KEY_PRESS_EVENT, KEY_RELEASE_EVENT, MOTION_NOTIFY_EVENT, PropMode, Window,
@@ -170,6 +171,67 @@ impl Hands {
         self.sync();
     }
 
+    /// A `RandR` monitor over part of the screen, as `xrandr --setmonitor` defines one.
+    fn monitor(&self, name: &str, x: i16, y: i16, width: u16, height: u16) -> u32 {
+        let name = self.atom(name);
+        let info = randr::MonitorInfo {
+            name,
+            primary: false,
+            automatic: false,
+            x,
+            y,
+            width,
+            height,
+            width_in_millimeters: u32::from(width) / 4,
+            height_in_millimeters: u32::from(height) / 4,
+            outputs: Vec::new(),
+        };
+        self.conn
+            .randr_set_monitor(self.root, info)
+            .expect("request")
+            .check()
+            .expect("the monitor is set");
+        name
+    }
+
+    fn remove_monitor(&self, name: u32) {
+        self.conn
+            .randr_delete_monitor(self.root, name)
+            .expect("request")
+            .check()
+            .expect("the monitor is removed");
+    }
+
+    /// A borderless window filling a rectangle with `pixel`, on top of everything.
+    fn paint(&self, x: i16, y: i16, width: u16, height: u16, pixel: u32) -> Window {
+        let window = self.conn.generate_id().expect("an ID");
+        self.conn
+            .create_window(
+                COPY_DEPTH_FROM_PARENT,
+                window,
+                self.root,
+                x,
+                y,
+                width,
+                height,
+                0,
+                WindowClass::INPUT_OUTPUT,
+                0,
+                &CreateWindowAux::new()
+                    .background_pixel(pixel)
+                    .override_redirect(1),
+            )
+            .expect("request");
+        self.conn.map_window(window).expect("request");
+        window
+    }
+
+    /// Moves the pointer to `(x, y)` on the screen.
+    fn point_at(&self, x: i16, y: i16) {
+        self.fake(MOTION_NOTIFY_EVENT, 0, x, y);
+        self.sync();
+    }
+
     /// Waits until the server has handled everything sent so far.
     fn sync(&self) {
         self.conn
@@ -310,6 +372,7 @@ fn an_x11_session_gets_the_x11_adapters() {
     assert!(sensors.input_hooks);
     hands.activate(hands.window(Some(("probe", "ProbeApp"))));
     assert!(sensors.window.foreground(false).is_ok());
+    assert!(!sensors.capture.monitors().expect("the monitors").is_empty());
     assert!(sensors.idle.idle_for().is_ok());
     drop(sensors.input.drain());
     hands.key();
@@ -457,4 +520,87 @@ fn nothing_in_front_differs_from_no_window_manager() {
     assert_eq!(reader.foreground(true), Ok(None));
     hands.no_window_manager();
     assert_eq!(reader.foreground(true), Err(SensorError::Unsupported));
+}
+
+/// The pixel at `(x, y)` of a frame, as RGBA.
+fn pixel(frame: &Frame, x: u32, y: u32) -> [u8; 4] {
+    let at = usize::try_from((y * frame.monitor.width + x) * 4).expect("an index");
+    let bytes = frame.rgba.get(at..at + 4).expect("inside the frame");
+    [bytes[0], bytes[1], bytes[2], bytes[3]]
+}
+
+const RED: [u8; 4] = [0xff, 0, 0, 0xff];
+const BLUE: [u8; 4] = [0, 0, 0xff, 0xff];
+
+#[test]
+#[ignore = "needs an X server: run under xvfb-run with --ignored"]
+fn captures_two_monitors_of_different_sizes() {
+    let _one = serial();
+    let hands = Hands::new();
+    let root = hands
+        .conn
+        .get_geometry(hands.root)
+        .expect("request")
+        .reply()
+        .expect("reply");
+    assert!(root.width >= 1280 && root.height >= 1024, "{root:?}");
+    // Two monitors of different sizes over the screen, each showing a colour of its own.
+    let left = hands.monitor("WORKLUME-LEFT", 0, 0, 800, 600);
+    let right = hands.monitor("WORKLUME-RIGHT", 800, 0, 480, 1024);
+    let red = hands.paint(0, 0, 800, 600, 0x00ff_0000);
+    let blue = hands.paint(800, 0, 480, 1024, 0x0000_00ff);
+    hands.sync();
+    sleep(Duration::from_millis(100));
+
+    let capture = X11Capture::connect().expect("a 32-bit TrueColor screen");
+    // The screen-wide monitor Xvfb keeps spans both, so it is left out.
+    let mut names: Vec<String> = capture
+        .monitors()
+        .expect("the monitors")
+        .into_iter()
+        .map(|monitor| monitor.name)
+        .collect();
+    names.sort();
+    assert_eq!(names, ["WORKLUME-LEFT", "WORKLUME-RIGHT"]);
+
+    let mut frames = capture.capture(Monitors::All).expect("frames");
+    frames.sort_by(|a, b| a.monitor.name.cmp(&b.monitor.name));
+    let [left_frame, right_frame] = frames.as_slice() else {
+        panic!("two frames: {frames:?}");
+    };
+    assert_eq!(
+        (left_frame.monitor.width, left_frame.monitor.height),
+        (800, 600)
+    );
+    assert_eq!(left_frame.rgba.len(), 800 * 600 * 4);
+    assert_eq!(
+        (right_frame.monitor.width, right_frame.monitor.height),
+        (480, 1024)
+    );
+    assert_eq!(right_frame.rgba.len(), 480 * 1024 * 4);
+    for (x, y) in [(0, 0), (799, 0), (400, 300), (0, 599), (799, 599)] {
+        assert_eq!(pixel(left_frame, x, y), RED, "left at {x},{y}");
+    }
+    for (x, y) in [(0, 0), (479, 0), (240, 512), (0, 1023), (479, 1023)] {
+        assert_eq!(pixel(right_frame, x, y), BLUE, "right at {x},{y}");
+    }
+    // A frame's Debug never shows pixels.
+    assert!(format!("{left_frame:?}").len() < 400);
+
+    // The active monitor is the one under the pointer.
+    hands.point_at(1000, 900);
+    let active = capture.capture(Monitors::Active).expect("a frame");
+    assert_eq!(active.len(), 1);
+    assert_eq!(active[0].monitor.name, "WORKLUME-RIGHT");
+    hands.point_at(100, 100);
+    let active = capture.capture(Monitors::Active).expect("a frame");
+    assert_eq!(active[0].monitor.name, "WORKLUME-LEFT");
+    assert_eq!(pixel(&active[0], 10, 10), RED);
+
+    for window in [red, blue] {
+        hands.conn.destroy_window(window).expect("request");
+    }
+    hands.remove_monitor(left);
+    hands.remove_monitor(right);
+    hands.sync();
 }
