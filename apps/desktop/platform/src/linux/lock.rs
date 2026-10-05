@@ -21,6 +21,7 @@ use dbus::Message;
 use dbus::blocking::Connection;
 use dbus::blocking::stdintf::org_freedesktop_dbus::Properties;
 
+use super::bus::{ABSENT, Bus, Connect};
 use crate::{SensorError, SessionLock};
 
 /// How long a reading may wait for an answer. A tick must not stall behind a busy bus.
@@ -35,49 +36,6 @@ const SCREEN_SAVERS: [(&str, &str); 2] = [
     ),
     ("org.gnome.ScreenSaver", "/org/gnome/ScreenSaver"),
 ];
-/// D-Bus errors meaning the service isn't there, rather than that it failed.
-const ABSENT: [&str; 4] = [
-    "org.freedesktop.DBus.Error.ServiceUnknown",
-    "org.freedesktop.DBus.Error.NameHasNoOwner",
-    "org.freedesktop.DBus.Error.UnknownObject",
-    "org.freedesktop.DBus.Error.UnknownMethod",
-];
-
-type Connect = Box<dyn Fn() -> Result<Connection, dbus::Error> + Send>;
-
-/// A bus connected on first use, and again after a failure.
-struct Bus {
-    connect: Connect,
-    conn: Option<Connection>,
-}
-
-impl Bus {
-    fn new(connect: Connect) -> Self {
-        Self {
-            connect,
-            conn: None,
-        }
-    }
-
-    /// Runs `call` on the connection; a failed call drops it.
-    fn call<T>(
-        &mut self,
-        call: impl FnOnce(&Connection) -> Result<T, dbus::Error>,
-    ) -> Result<T, dbus::Error> {
-        if self.conn.is_none() {
-            self.conn = Some((self.connect)()?);
-        }
-        let result = self
-            .conn
-            .as_ref()
-            .map_or_else(|| Err(dbus::Error::new_failed("not connected")), call);
-        if result.is_err() {
-            self.conn = None;
-        }
-        result
-    }
-}
-
 /// Whether the member's Linux session is locked. See the module documentation.
 pub struct LinuxSessionLock {
     buses: Mutex<(Bus, Bus)>,

@@ -200,7 +200,7 @@ fn near(actual: i64, expected: i64) -> bool {
 /// A reader, once it has set its watches: idle time is unknown until then.
 fn reader() -> (MutterIdle, Arc<OsClock>) {
     let clock = Arc::new(OsClock::new().expect("the clock"));
-    let idle = MutterIdle::connect(Arc::clone(&clock) as _).expect("the reader");
+    let idle = MutterIdle::connect(Arc::clone(&clock) as _, false).expect("the reader");
     let started = Instant::now();
     while idle.idle_for().is_err() {
         assert!(
@@ -323,7 +323,7 @@ fn only_mutters_signals_count() {
 fn without_mutter_the_reader_is_unsupported_and_mutter_leaving_is_reported() {
     let _turn = serial();
     assert!(matches!(
-        MutterIdle::connect(Arc::new(OsClock::new().unwrap())),
+        MutterIdle::connect(Arc::new(OsClock::new().unwrap()), false),
         Err(SensorError::Unsupported)
     ));
     let mutter = Mutter::start(Duration::from_secs(10));
@@ -344,4 +344,27 @@ fn dropping_the_reader_removes_its_watches_promptly() {
     drop(idle);
     assert!(dropped.elapsed() < Duration::from_secs(1));
     assert_eq!(mutter.removed().len(), 2, "{:?}", mutter.removed());
+}
+
+#[test]
+#[ignore = "needs a session bus"]
+fn in_a_gnome_session_mutter_is_waited_for_while_the_shell_starts() {
+    let _turn = serial();
+    let clock = Arc::new(OsClock::new().unwrap());
+    let idle = MutterIdle::connect(Arc::clone(&clock) as _, true).expect("the reader");
+    sleep(Duration::from_millis(700));
+    assert!(idle.idle_for().is_err(), "unknown until Mutter appears");
+    let _mutter = Mutter::start(Duration::from_secs(5));
+    let started = Instant::now();
+    while idle.idle_for().is_err() {
+        assert!(
+            started.elapsed() < Duration::from_secs(3),
+            "never noticed Mutter"
+        );
+        sleep(Duration::from_millis(20));
+    }
+    assert!(near(
+        idle_ms(&idle),
+        5_000 + i64::try_from(started.elapsed().as_millis()).unwrap()
+    ));
 }

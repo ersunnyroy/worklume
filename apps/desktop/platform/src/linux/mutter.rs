@@ -20,7 +20,7 @@ use std::fmt;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::thread::JoinHandle;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use dbus::blocking::{Connection, Proxy};
 use dbus::message::MatchRule;
@@ -35,6 +35,8 @@ const PATH: &str = "/org/gnome/Mutter/IdleMonitor/Core";
 const TIMEOUT: Duration = Duration::from_secs(5);
 /// How many times setting the watches is tried when Mutter doesn't answer in time.
 const TRIES: u32 = 3;
+/// How long a GNOME session's Mutter may take to appear on the bus while the Shell starts.
+const APPEAR_WITHIN: Duration = Duration::from_secs(30);
 /// How long the reader waits for a message before checking whether it should stop.
 const WAKE_EVERY: Duration = Duration::from_millis(500);
 /// The idle watch's interval, as Mutter takes it.
@@ -54,6 +56,8 @@ struct Shared {
     fired: Mutex<VecDeque<(u32, i64)>>,
     /// Mutter left the bus: the Shell stopped.
     gone: AtomicBool,
+    /// Mutter's unique bus name, once it is on the bus: only its signals count.
+    owner: Mutex<Option<String>>,
     /// Why the reader stopped, once it has.
     failure: Mutex<Option<String>>,
     stop: AtomicBool,
@@ -68,29 +72,23 @@ struct Watches {
 }
 
 impl MutterIdle {
-    /// Connects to the session bus and starts watching, stamping notices with `clock`.
+    /// Connects to the session bus and starts watching, stamping notices with `clock`. In a
+    /// GNOME session (`gnome`), Mutter is waited for while the Shell starts, up to 30 s.
     ///
     /// # Errors
     ///
-    /// [`SensorError::Unsupported`] when Mutter's `IdleMonitor` isn't on the bus (not GNOME);
-    /// [`SensorError::Failed`] when there is no session bus. Mutter not answering is reported
-    /// by the readings, which are unknown until it does.
-    pub fn connect(clock: Arc<dyn Clock>) -> Result<Self, SensorError> {
+    /// [`SensorError::Unsupported`] when Mutter's `IdleMonitor` isn't on the bus outside a GNOME
+    /// session; [`SensorError::Failed`] when there is no session bus. Mutter not answering is
+    /// reported by the readings, which are unknown until it does.
+    pub fn connect(clock: Arc<dyn Clock>, gnome: bool) -> Result<Self, SensorError> {
         let conn = Connection::new_session().map_err(|error| failed(&error))?;
-        Self::start(conn, clock)
+        Self::start(conn, clock, gnome)
     }
 
-    fn start(conn: Connection, clock: Arc<dyn Clock>) -> Result<Self, SensorError> {
-        let bus = conn.with_proxy("org.freedesktop.DBus", "/org/freedesktop/DBus", TIMEOUT);
-        let (present,): (bool,) = bus
-            .method_call("org.freedesktop.DBus", "NameHasOwner", (SERVICE,))
-            .map_err(|error| failed(&error))?;
-        if !present {
+    fn start(conn: Connection, clock: Arc<dyn Clock>, gnome: bool) -> Result<Self, SensorError> {
+        if !gnome && !present(&conn).map_err(|error| failed(&error))? {
             return Err(SensorError::Unsupported);
         }
-        let (owner,): (String,) = bus
-            .method_call("org.freedesktop.DBus", "GetNameOwner", (SERVICE,))
-            .map_err(|error| failed(&error))?;
         let shared = Arc::new(Shared::default());
         conn.add_match(
             MatchRule::new_signal("org.freedesktop.DBus", "NameOwnerChanged")
@@ -113,9 +111,11 @@ impl MutterIdle {
                 let shared = Arc::clone(&shared);
                 let clock = Arc::clone(&clock);
                 move |(watch,): (u32,), _, message| {
-                    if message.sender().as_deref() == Some(owner.as_str())
-                        && let Ok(now) = clock.read()
-                    {
+                    let from_mutter = message
+                        .sender()
+                        .as_deref()
+                        .is_some_and(|sender| lock(&shared.owner).as_deref() == Some(sender));
+                    if from_mutter && let Ok(now) = clock.read() {
                         lock(&shared.fired).push_back((watch, now.mono_ms));
                     }
                     true
@@ -163,6 +163,21 @@ fn watch(
     shared: &Shared,
     watches: &mut Watches,
 ) -> Result<(), String> {
+    let appeared = Instant::now();
+    while !present(conn).map_err(|error| error.to_string())? {
+        if shared.stop.load(Ordering::Relaxed) {
+            return Ok(());
+        }
+        if appeared.elapsed() >= APPEAR_WITHIN {
+            return Err("Mutter's idle monitor never appeared on the bus".to_owned());
+        }
+        std::thread::sleep(WAKE_EVERY);
+    }
+    let (owner,): (String,) = conn
+        .with_proxy("org.freedesktop.DBus", "/org/freedesktop/DBus", TIMEOUT)
+        .method_call("org.freedesktop.DBus", "GetNameOwner", (SERVICE,))
+        .map_err(|error: dbus::Error| error.to_string())?;
+    *lock(&shared.owner) = Some(owner);
     let monitor = conn.with_proxy(SERVICE, PATH, TIMEOUT);
     let mut tries = 0;
     loop {
@@ -243,6 +258,14 @@ fn read(
         }
     }
     Ok(())
+}
+
+/// Whether Mutter's idle monitor is on the bus.
+fn present(conn: &Connection) -> Result<bool, dbus::Error> {
+    let (present,): (bool,) = conn
+        .with_proxy("org.freedesktop.DBus", "/org/freedesktop/DBus", TIMEOUT)
+        .method_call("org.freedesktop.DBus", "NameHasOwner", (SERVICE,))?;
+    Ok(present)
 }
 
 /// The moment of the member's last input, on `clock`, from Mutter's idle time.

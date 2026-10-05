@@ -11,7 +11,8 @@ question through typed commands and an event behind an IPC allowlist (E09-S09). 
 track arrive with sign-in and the configuration (E09-S03, E09-S06). On Linux X11 the agent
 measures idle time, input and activity, reads the app in front, and captures each monitor for
 screenshots (E12-S02 to E12-S04). On Wayland it measures idle time and activity from GNOME's
-Mutter or the compositor's idle notices (E13-S04). On both it pauses while the session is
+Mutter or the compositor's idle notices (E13-S04), and on GNOME reads the app in front through
+its own GNOME Shell extension (`src-tauri/linux/gnome-extension`, E13-S05). On both it pauses while the session is
 locked, and its packages start it at login through an XDG autostart entry (E12-S05).
 Elsewhere, sensors wait for their per-OS adapters (E10–E13) and read as unsupported.
 `cargo run -p worklume-platform --example sensors` shows what this session's sensors read.

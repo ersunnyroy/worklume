@@ -5,7 +5,8 @@
 //!   capture (E12-S02); the session lock from logind or the screen saver (E12-S03, shared with
 //!   Wayland).
 //! - Linux Wayland: idle time and active spans (E13-S04), from Mutter's `IdleMonitor` on GNOME,
-//!   else from `ext-idle-notify-v1`. Never the X11 adapters, though `DISPLAY` is set for
+//!   else from `ext-idle-notify-v1`; on GNOME, the window in front from the Worklume extension
+//!   (E13-S05), which the agent turns on. Never the X11 adapters, though `DISPLAY` is set for
 //!   Xwayland: through it they would see only X11 apps.
 //! - Everything else waits for its story: browser addresses (E12-S04 with E35, E10-S04,
 //!   E11-S04), the macOS and Windows front app (E10-S04, E11-S04), and their input and locks
@@ -99,7 +100,12 @@ impl DeviceSensors {
         use crate::SensorError;
         use crate::linux::{MutterIdle, WaylandIdle};
 
-        let mutter = match MutterIdle::connect(Arc::clone(clock)) {
+        let gnome = std::env::var("XDG_CURRENT_DESKTOP").is_ok_and(|desktops| {
+            desktops
+                .split(':')
+                .any(|desktop| desktop.eq_ignore_ascii_case("GNOME"))
+        });
+        let mutter = match MutterIdle::connect(Arc::clone(clock), gnome) {
             Ok(mutter) => Some(Arc::new(mutter)),
             Err(SensorError::Unsupported) => None,
             Err(error) => {
@@ -112,6 +118,7 @@ impl DeviceSensors {
             self.idle = Arc::clone(&mutter) as _;
             self.spans = mutter;
             self.activity_spans = true;
+            self.start_gnome_window();
             return;
         }
         match WaylandIdle::connect(Arc::clone(clock)) {
@@ -130,6 +137,13 @@ impl DeviceSensors {
             }
             Err(error) => self.problems.push(format!("idle time on Wayland: {error}")),
         }
+    }
+
+    /// GNOME's window in front, from the Worklume extension, which the reader turns on once
+    /// GNOME Shell knows it (see `linux::GnomeWindow`).
+    #[cfg(target_os = "linux")]
+    fn start_gnome_window(&mut self) {
+        self.window = Arc::new(crate::linux::GnomeWindow::new());
     }
 
     #[cfg(not(target_os = "linux"))]

@@ -1,5 +1,5 @@
 //! Shows what this session's sensors measure, once a second: which started, idle time, active
-//! spans and the lock. For checking an adapter on a real desktop; it prints no window titles,
+//! spans, the app in front and the lock. For checking an adapter on a real desktop; it prints no window titles,
 //! addresses or input.
 //!
 //! `cargo run -p worklume-platform --example sensors -- [seconds]` (10 by default).
@@ -63,10 +63,15 @@ fn main() {
                     .join(", ")
             },
         );
+        // The app only: never the title.
+        let front = sensors.window.foreground(false).map_or_else(
+            |error| error.to_string(),
+            |app| app.map_or_else(|| "nothing".to_owned(), |app| app.identifier),
+        );
         let locked = sensors
             .lock
             .locked()
             .map_or_else(|error| error.to_string(), |locked| locked.to_string());
-        println!("idle {idle}; spans {spans}; locked {locked}");
+        println!("idle {idle}; spans {spans}; in front {front}; locked {locked}");
     }
 }
