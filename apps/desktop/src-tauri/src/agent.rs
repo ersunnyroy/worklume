@@ -175,7 +175,7 @@ impl Agent {
     pub fn open_on_this_device(&self) -> Result<(), Unavailable> {
         match this_device() {
             Ok((dir, secrets, sensors, input_method)) => {
-                self.open(&dir, &secrets, sensors, input_method)
+                self.open(&dir, &*secrets, sensors, input_method)
             }
             Err(failure) => self.settle(Err(failure)),
         }
@@ -405,7 +405,7 @@ impl Running {
 }
 
 /// This device's store folder, credential store and sensors, and how its input is measured.
-fn this_device() -> Result<(PathBuf, OsSecretStore, Sensors, InputMethod), OpenFailure> {
+fn this_device() -> Result<(PathBuf, Arc<OsSecretStore>, Sensors, InputMethod), OpenFailure> {
     let dir = store_dir().ok_or_else(|| {
         OpenFailure::new(
             Unavailable::NoDataFolder,
@@ -413,18 +413,18 @@ fn this_device() -> Result<(PathBuf, OsSecretStore, Sensors, InputMethod), OpenF
             "the OS gave none",
         )
     })?;
-    let secrets = OsSecretStore::new(APP_IDENTIFIER).map_err(|error| {
+    let secrets = Arc::new(OsSecretStore::new(APP_IDENTIFIER).map_err(|error| {
         OpenFailure::new(
             Unavailable::CredentialStore,
             "reaching the credential store",
             error,
         )
-    })?;
+    })?);
     let clock: Arc<dyn Clock> = Arc::new(
         OsClock::new()
             .map_err(|error| OpenFailure::new(Unavailable::Clock, "reading the clock", error))?,
     );
-    let device = DeviceSensors::start(&clock);
+    let device = DeviceSensors::start(&clock, &(Arc::clone(&secrets) as Arc<dyn SecretStore>));
     for problem in &device.problems {
         warn!(%problem, "a sensor couldn't start; the agent tracks without it");
     }

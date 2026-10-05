@@ -6,7 +6,8 @@
 //!   Wayland).
 //! - Linux Wayland: idle time and active spans (E13-S04), from Mutter's `IdleMonitor` on GNOME,
 //!   else from `ext-idle-notify-v1`; on GNOME, the window in front from the Worklume extension
-//!   (E13-S05), which the agent turns on. Never the X11 adapters, though `DISPLAY` is set for
+//!   (E13-S05), which the agent turns on; screen capture through the desktop portal (E13-S03),
+//!   the restore token kept in the credential store. Never the X11 adapters, though `DISPLAY` is set for
 //!   Xwayland: through it they would see only X11 apps.
 //! - Everything else waits for its story: browser addresses (E12-S04 with E35, E10-S04,
 //!   E11-S04), the macOS and Windows front app (E10-S04, E11-S04), and their input and locks
@@ -16,7 +17,7 @@ use std::sync::Arc;
 
 use crate::{
     ActiveWindow, ActivitySpans, BrowserUrl, Clock, IdleSource, InputActivity, ScreenCapture,
-    SessionLock, Unsupported,
+    SecretStore, SessionLock, Unsupported,
 };
 
 /// The sensors of this session, and what couldn't start.
@@ -42,9 +43,10 @@ pub struct DeviceSensors {
 }
 
 impl DeviceSensors {
-    /// Starts this session's adapters. Input events are stamped with `clock`.
+    /// Starts this session's adapters. Input events are stamped with `clock`; secrets an
+    /// adapter keeps (the Wayland screen-capture consent) go to `secrets`.
     #[must_use]
-    pub fn start(clock: &Arc<dyn Clock>) -> Self {
+    pub fn start(clock: &Arc<dyn Clock>, secrets: &Arc<dyn SecretStore>) -> Self {
         let mut sensors = Self {
             idle: Arc::new(Unsupported),
             window: Arc::new(Unsupported),
@@ -58,19 +60,23 @@ impl DeviceSensors {
             problems: Vec::new(),
             limits: Vec::new(),
         };
-        sensors.start_os(clock);
+        sensors.start_os(clock, secrets);
         sensors
     }
 
     #[cfg(target_os = "linux")]
-    fn start_os(&mut self, clock: &Arc<dyn Clock>) {
+    fn start_os(&mut self, clock: &Arc<dyn Clock>, secrets: &Arc<dyn SecretStore>) {
         use crate::linux::{LinuxSessionLock, X11Capture, X11Idle, X11Input, X11Window};
         use crate::{LinuxSession, PlatformInfo};
 
         self.lock = Arc::new(LinuxSessionLock::new());
         match PlatformInfo::current().linux_session {
             Some(LinuxSession::X11) => {}
-            Some(LinuxSession::Wayland) => return self.start_wayland(clock),
+            Some(LinuxSession::Wayland) => {
+                // Screenshots through the portal, which asks the member at the first capture.
+                self.capture = Arc::new(crate::linux::PortalCapture::new(Arc::clone(secrets)));
+                return self.start_wayland(clock);
+            }
             _ => return,
         }
         match X11Idle::connect() {
@@ -152,7 +158,7 @@ impl DeviceSensors {
         clippy::missing_const_for_fn,
         reason = "the macOS and Windows adapters arrive with E10 and E11"
     )]
-    fn start_os(&mut self, _clock: &Arc<dyn Clock>) {}
+    fn start_os(&mut self, _clock: &Arc<dyn Clock>, _secrets: &Arc<dyn SecretStore>) {}
 }
 
 impl std::fmt::Debug for DeviceSensors {

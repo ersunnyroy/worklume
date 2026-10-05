@@ -13,10 +13,11 @@ use std::time::{Duration, Instant};
 
 use std::path::PathBuf;
 
+use worklume_platform::fake::MemorySecretStore;
 use worklume_platform::linux::{X11Capture, X11Idle, X11Input, X11Window};
 use worklume_platform::{
     ActiveWindow, Clock, DeviceSensors, ForegroundApp, Frame, IdleSource, InputActivity,
-    InputEvent, InputKind, Monitors, OsClock, ScreenCapture, SensorError,
+    InputEvent, InputKind, Monitors, OsClock, ScreenCapture, SecretStore, SensorError,
 };
 use x11rb::COPY_DEPTH_FROM_PARENT;
 use x11rb::connection::Connection;
@@ -367,7 +368,8 @@ fn an_x11_session_gets_the_x11_adapters() {
     let _one = serial();
     let hands = Hands::new();
     let clock: Arc<dyn Clock> = Arc::new(OsClock::new().expect("a clock"));
-    let sensors = DeviceSensors::start(&clock);
+    let secrets: Arc<dyn SecretStore> = Arc::new(MemorySecretStore::default());
+    let sensors = DeviceSensors::start(&clock, &secrets);
     assert!(sensors.problems.is_empty(), "{:?}", sensors.problems);
     assert!(sensors.input_hooks);
     hands.activate(hands.window(Some(("probe", "ProbeApp"))));

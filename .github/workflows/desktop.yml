@@ -63,7 +63,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev libssl-dev patchelf libdbus-1-dev pkg-config gnome-keyring xvfb
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev libssl-dev patchelf libdbus-1-dev pkg-config gnome-keyring xvfb libpipewire-0.3-dev libclang-dev
 
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
@@ -140,9 +140,11 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-  # The Wayland idle readers (E13-S04) against a real compositor and a stand-in for GNOME's
-  # Mutter. sway starts headless inside each test; Ubuntu 22.04's sway is too old to have
-  # ext-idle-notify-v1, so this runs on 24.04, apart from the 22.04 build.
+  # The Wayland readers against real services and stand-ins: idle time against a headless sway
+  # and a stand-in Mutter (E13-S04), the GNOME window against a stand-in extension (E13-S05), and
+  # screen capture against a stand-in portal sharing a PipeWire test source (E13-S03). Ubuntu
+  # 22.04's sway is too old to have ext-idle-notify-v1, so this runs on 24.04, apart from the
+  # 22.04 build.
   wayland:
     name: Wayland idle readers
     runs-on: ubuntu-24.04
@@ -152,17 +154,19 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Install sway and the D-Bus library
+      - name: Install sway, PipeWire, GStreamer and the D-Bus library
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends sway libdbus-1-dev pkg-config dbus
+          sudo apt-get install -y --no-install-recommends sway libdbus-1-dev pkg-config dbus \
+            libpipewire-0.3-dev libclang-dev pipewire pipewire-bin wireplumber \
+            gstreamer1.0-tools gstreamer1.0-plugins-base gstreamer1.0-pipewire
 
       - name: Install the pinned Rust toolchain
         run: rustup toolchain install
 
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
 
-      - name: Test the Wayland readers (sway, and stand-ins for Mutter and the GNOME extension)
+      - name: Test the Wayland readers (sway, PipeWire, and stand-ins for Mutter, the GNOME extension and the portal)
         run: >-
           dbus-run-session -- cargo test -p worklume-platform --features fake --test wayland
-          --test mutter --test gnome --locked -- --ignored
+          --test mutter --test gnome --test portal --locked -- --ignored
