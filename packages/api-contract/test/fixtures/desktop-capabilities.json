@@ -1,0 +1,321 @@
+{
+  "reasons": [
+    "not_implemented",
+    "no_graphical_session",
+    "adapter_failed",
+    "permission_denied",
+    "consent_not_asked",
+    "consent_dialog_open",
+    "consent_declined",
+    "no_screencast_portal",
+    "estimated_from_idle",
+    "idle_time_only",
+    "no_keyboard_mouse_split",
+    "idle_inhibitors_count_as_active",
+    "gnome_extension_next_login",
+    "gnome_extension_disabled",
+    "gnome_extension_failed",
+    "desktop_unsupported"
+  ],
+  "reports": [
+    {
+      "body": {
+        "desktop": "gnome",
+        "features": {
+          "activity": {
+            "reasons": [],
+            "status": "granted"
+          },
+          "apps": {
+            "reasons": [],
+            "status": "granted"
+          },
+          "idle": {
+            "reasons": [],
+            "status": "granted"
+          },
+          "screenshots": {
+            "reasons": [],
+            "status": "granted"
+          },
+          "session_lock": {
+            "reasons": [],
+            "status": "granted"
+          },
+          "urls": {
+            "reasons": [
+              "not_implemented"
+            ],
+            "status": "unsupported"
+          }
+        },
+        "platform": "linux_x11"
+      },
+      "name": "ubuntu_x11"
+    },
+    {
+      "body": {
+        "desktop": "gnome",
+        "features": {
+          "activity": {
+            "reasons": [
+              "estimated_from_idle",
+              "no_keyboard_mouse_split"
+            ],
+            "status": "reduced"
+          },
+          "apps": {
+            "reasons": [
+              "gnome_extension_next_login"
+            ],
+            "status": "pending"
+          },
+          "idle": {
+            "reasons": [],
+            "status": "granted"
+          },
+          "screenshots": {
+            "reasons": [
+              "consent_not_asked"
+            ],
+            "status": "pending"
+          },
+          "session_lock": {
+            "reasons": [],
+            "status": "granted"
+          },
+          "urls": {
+            "reasons": [
+              "not_implemented"
+            ],
+            "status": "unsupported"
+          }
+        },
+        "platform": "linux_wayland"
+      },
+      "name": "gnome_wayland_first_login"
+    },
+    {
+      "body": {
+        "desktop": "gnome",
+        "features": {
+          "activity": {
+            "reasons": [
+              "estimated_from_idle",
+              "no_keyboard_mouse_split"
+            ],
+            "status": "reduced"
+          },
+          "apps": {
+            "reasons": [
+              "gnome_extension_disabled"
+            ],
+            "status": "denied"
+          },
+          "idle": {
+            "reasons": [],
+            "status": "granted"
+          },
+          "screenshots": {
+            "reasons": [
+              "consent_declined"
+            ],
+            "status": "denied"
+          },
+          "session_lock": {
+            "reasons": [],
+            "status": "granted"
+          },
+          "urls": {
+            "reasons": [
+              "not_implemented"
+            ],
+            "status": "unsupported"
+          }
+        },
+        "platform": "linux_wayland"
+      },
+      "name": "gnome_wayland_declined"
+    },
+    {
+      "body": {
+        "desktop": "kde",
+        "features": {
+          "activity": {
+            "reasons": [
+              "estimated_from_idle",
+              "no_keyboard_mouse_split",
+              "idle_inhibitors_count_as_active"
+            ],
+            "status": "reduced"
+          },
+          "apps": {
+            "reasons": [
+              "desktop_unsupported"
+            ],
+            "status": "unsupported"
+          },
+          "idle": {
+            "reasons": [],
+            "status": "granted"
+          },
+          "screenshots": {
+            "reasons": [
+              "consent_dialog_open"
+            ],
+            "status": "pending"
+          },
+          "session_lock": {
+            "reasons": [],
+            "status": "granted"
+          },
+          "urls": {
+            "reasons": [
+              "not_implemented"
+            ],
+            "status": "unsupported"
+          }
+        },
+        "platform": "linux_wayland"
+      },
+      "name": "kde_wayland"
+    },
+    {
+      "body": {
+        "desktop": "other",
+        "features": {
+          "activity": {
+            "reasons": [
+              "idle_time_only",
+              "no_keyboard_mouse_split",
+              "adapter_failed"
+            ],
+            "status": "reduced"
+          },
+          "apps": {
+            "reasons": [],
+            "status": "granted"
+          },
+          "idle": {
+            "reasons": [],
+            "status": "granted"
+          },
+          "screenshots": {
+            "reasons": [],
+            "status": "granted"
+          },
+          "session_lock": {
+            "reasons": [
+              "adapter_failed"
+            ],
+            "status": "failed"
+          },
+          "urls": {
+            "reasons": [
+              "not_implemented"
+            ],
+            "status": "unsupported"
+          }
+        },
+        "platform": "linux_x11"
+      },
+      "name": "x11_without_input_events"
+    },
+    {
+      "body": {
+        "features": {
+          "activity": {
+            "reasons": [
+              "not_implemented"
+            ],
+            "status": "unsupported"
+          },
+          "apps": {
+            "reasons": [
+              "not_implemented"
+            ],
+            "status": "unsupported"
+          },
+          "idle": {
+            "reasons": [
+              "not_implemented"
+            ],
+            "status": "unsupported"
+          },
+          "screenshots": {
+            "reasons": [
+              "not_implemented"
+            ],
+            "status": "unsupported"
+          },
+          "session_lock": {
+            "reasons": [
+              "not_implemented"
+            ],
+            "status": "unsupported"
+          },
+          "urls": {
+            "reasons": [
+              "not_implemented"
+            ],
+            "status": "unsupported"
+          }
+        },
+        "platform": "macos"
+      },
+      "name": "macos_today"
+    },
+    {
+      "body": {
+        "features": {
+          "activity": {
+            "reasons": [
+              "no_graphical_session"
+            ],
+            "status": "unsupported"
+          },
+          "apps": {
+            "reasons": [
+              "no_graphical_session"
+            ],
+            "status": "unsupported"
+          },
+          "idle": {
+            "reasons": [
+              "no_graphical_session"
+            ],
+            "status": "unsupported"
+          },
+          "screenshots": {
+            "reasons": [
+              "no_graphical_session"
+            ],
+            "status": "unsupported"
+          },
+          "session_lock": {
+            "reasons": [
+              "no_graphical_session"
+            ],
+            "status": "unsupported"
+          },
+          "urls": {
+            "reasons": [
+              "no_graphical_session"
+            ],
+            "status": "unsupported"
+          }
+        },
+        "platform": "linux_x11"
+      },
+      "name": "linux_without_a_desktop_session"
+    }
+  ],
+  "statuses": [
+    "granted",
+    "reduced",
+    "pending",
+    "denied",
+    "unsupported",
+    "failed"
+  ]
+}

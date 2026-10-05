@@ -315,6 +315,9 @@ importers:
       '@tanstack/react-router':
         specifier: 1.170.38
         version: 1.170.38(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
+      '@worklume/api-client':
+        specifier: workspace:*
+        version: link:../../packages/api-client
       i18next:
         specifier: 26.4.2
         version: 26.4.2(typescript@6.0.3)

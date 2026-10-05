@@ -1,5 +1,5 @@
-//! Shows what this session's sensors measure, once a second: which started, idle time, active
-//! spans, the app in front and the lock. For checking an adapter on a real desktop; it prints no
+//! Shows what this session's sensors measure, once a second: which started, the capability
+//! report (codes only), idle time, active spans, the app in front and the lock. For checking an adapter on a real desktop; it prints no
 //! window titles, addresses, input or pixels.
 //!
 //! `cargo run -p worklume-platform --example sensors -- [seconds] [capture]` (10 by default).
@@ -72,6 +72,7 @@ fn main() {
     for limit in &sensors.limits {
         println!("limit: {limit}");
     }
+    println!("capabilities: {}", sensors.report());
     if std::env::args().any(|arg| arg == "capture") {
         for attempt in 1..=3 {
             let started = Instant::now();
@@ -100,6 +101,7 @@ fn main() {
                 Err(error) => println!("capture {attempt}: {error} after {:?}", started.elapsed()),
             }
         }
+        println!("capabilities: {}", sensors.report());
     }
     for _ in 0..seconds {
         sleep(Duration::from_secs(1));

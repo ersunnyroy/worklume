@@ -69,11 +69,21 @@ export const commands = {
 	 *  See [`CommandError`].
 	 */
 	idleAnswer: (answer: IdleAnswerDto) => typedError<TimerViewDto, CommandError>(__TAURI_INVOKE("idle_answer", { answer })),
+	/**  What the device can measure, as last checked; `None` before the first check. */
+	deviceCapabilities: () => __TAURI_INVOKE<{
+	features: FeatureCapabilityDto[],
+} | null>("device_capabilities"),
+	/**
+	 *  After the member declined to share their screen, lets the next screenshot ask them again.
+	 *  Returns whether they had declined; `CapabilitiesChanged` follows with the new state.
+	 */
+	screenshotsAskAgain: () => __TAURI_INVOKE<boolean>("screenshots_ask_again"),
 };
 
 /** Events */
 export const events = {
 	agentChanged: makeEvent<AgentChanged>("agent-changed"),
+	capabilitiesChanged: makeEvent<CapabilitiesChanged>("capabilities-changed"),
 };
 
 /* Types */
@@ -97,6 +107,22 @@ export type AllowedDto = {
 	start_break: boolean,
 	end_break: boolean,
 };
+
+/**  Sent when what the device can measure changes; checked once a minute. */
+export type CapabilitiesChanged = CapabilitiesDto;
+
+/**
+ *  What the device can measure, feature by feature, for the window to explain what isn't
+ *  fully available. Codes only; the window words them.
+ */
+export type CapabilitiesDto = {
+	features: FeatureCapabilityDto[],
+};
+
+/**  As the contract's `DesktopCapabilityReason`. */
+export type CapabilityReasonDto = "not_implemented" | "no_graphical_session" | "adapter_failed" | "permission_denied" | "consent_not_asked" | "consent_dialog_open" | "consent_declined" | "no_screencast_portal" | "estimated_from_idle" | "idle_time_only" | "no_keyboard_mouse_split" | "idle_inhibitors_count_as_active" | "gnome_extension_next_login" | "gnome_extension_disabled" | "gnome_extension_failed" | "desktop_unsupported";
+
+export type CapabilityStatusDto = "granted" | "reduced" | "pending" | "denied" | "unsupported" | "failed";
 
 /**  The projects and tasks the member may track, and the organization's break policies. */
 export type CatalogDto = {
@@ -122,6 +148,15 @@ export type CommandError =
 "failed";
 
 export type DisplaySession = "x11" | "wayland" | "unknown";
+
+export type FeatureCapabilityDto = {
+	feature: FeatureDto,
+	status: CapabilityStatusDto,
+	/**  Empty when granted; otherwise why, most important first. */
+	reasons: CapabilityReasonDto[],
+};
+
+export type FeatureDto = "screenshots" | "activity" | "idle" | "apps" | "urls" | "session_lock";
 
 /**  The member's answer to the idle question. */
 export type IdleAnswerDto = { kind: "keep" } | { kind: "discard" } | 

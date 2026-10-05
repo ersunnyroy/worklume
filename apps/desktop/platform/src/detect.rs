@@ -15,12 +15,35 @@ pub enum LinuxSession {
     Unknown,
 }
 
+/// The Linux desktop, which decides the Wayland adapters (see `docs/spikes/E13-S01-wayland.md`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LinuxDesktop {
+    Gnome,
+    Kde,
+    /// Any other desktop that names itself: sway, Hyprland, Xfce, Cinnamon…
+    Other,
+}
+
+impl LinuxDesktop {
+    /// The capability report's name for it.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Gnome => "gnome",
+            Self::Kde => "kde",
+            Self::Other => "other",
+        }
+    }
+}
+
 /// What the agent runs on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PlatformInfo {
     pub os: OperatingSystem,
     /// Present on Linux only.
     pub linux_session: Option<LinuxSession>,
+    /// Present on Linux when the session names its desktop.
+    pub linux_desktop: Option<LinuxDesktop>,
 }
 
 impl PlatformInfo {
@@ -32,16 +55,20 @@ impl PlatformInfo {
             Self {
                 os: OperatingSystem::MacOs,
                 linux_session: None,
+                linux_desktop: None,
             }
         } else if cfg!(target_os = "windows") {
             Self {
                 os: OperatingSystem::Windows,
                 linux_session: None,
+                linux_desktop: None,
             }
         } else {
+            let var = |name: &str| std::env::var(name).ok();
             Self {
                 os: OperatingSystem::Linux,
-                linux_session: Some(linux_session_from_env(|name| std::env::var(name).ok())),
+                linux_session: Some(linux_session_from_env(var)),
+                linux_desktop: linux_desktop_from_env(var),
             }
         }
     }
@@ -60,16 +87,87 @@ pub fn linux_session_from_env(var: impl Fn(&str) -> Option<String>) -> LinuxSess
     }
 }
 
+/// Reads the desktop from `XDG_CURRENT_DESKTOP`, a colon-separated list such as
+/// `ubuntu:GNOME` or `KDE`, falling back to `XDG_SESSION_DESKTOP`. Any desktop listing `GNOME`
+/// counts as GNOME (Ubuntu's and Pop's do); whether GNOME Shell actually runs is up to the
+/// adapters, which ask it.
+#[must_use]
+pub fn linux_desktop_from_env(var: impl Fn(&str) -> Option<String>) -> Option<LinuxDesktop> {
+    let names = var("XDG_CURRENT_DESKTOP")
+        .filter(|names| !names.trim().is_empty())
+        .or_else(|| var("XDG_SESSION_DESKTOP"))?;
+    let names: Vec<&str> = names
+        .split(':')
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .collect();
+    let has = |wanted: &str| names.iter().any(|name| name.eq_ignore_ascii_case(wanted));
+    if names.is_empty() {
+        None
+    } else if has("GNOME") {
+        Some(LinuxDesktop::Gnome)
+    } else if has("KDE") || has("plasma") {
+        Some(LinuxDesktop::Kde)
+    } else {
+        Some(LinuxDesktop::Other)
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{LinuxSession, linux_session_from_env};
+    use super::{LinuxDesktop, LinuxSession, linux_desktop_from_env, linux_session_from_env};
 
-    fn session(vars: &[(&str, &str)]) -> LinuxSession {
-        linux_session_from_env(|name| {
+    fn lookup<'a>(vars: &'a [(&str, &str)]) -> impl Fn(&str) -> Option<String> + 'a {
+        |name| {
             vars.iter()
                 .find(|(key, _)| *key == name)
                 .map(|(_, value)| (*value).to_owned())
-        })
+        }
+    }
+
+    fn session(vars: &[(&str, &str)]) -> LinuxSession {
+        linux_session_from_env(lookup(vars))
+    }
+
+    fn desktop(vars: &[(&str, &str)]) -> Option<LinuxDesktop> {
+        linux_desktop_from_env(lookup(vars))
+    }
+
+    #[test]
+    fn desktops_are_read_from_the_session() {
+        let gnome = Some(LinuxDesktop::Gnome);
+        assert_eq!(desktop(&[("XDG_CURRENT_DESKTOP", "ubuntu:GNOME")]), gnome);
+        assert_eq!(desktop(&[("XDG_CURRENT_DESKTOP", "GNOME")]), gnome);
+        assert_eq!(desktop(&[("XDG_CURRENT_DESKTOP", "pop:gnome")]), gnome);
+        assert_eq!(
+            desktop(&[("XDG_CURRENT_DESKTOP", "KDE")]),
+            Some(LinuxDesktop::Kde)
+        );
+        assert_eq!(
+            desktop(&[("XDG_CURRENT_DESKTOP", "sway")]),
+            Some(LinuxDesktop::Other)
+        );
+        assert_eq!(
+            desktop(&[("XDG_CURRENT_DESKTOP", "X-Cinnamon")]),
+            Some(LinuxDesktop::Other)
+        );
+        assert_eq!(
+            desktop(&[("XDG_CURRENT_DESKTOP", "GNOME-Classic:GNOME")]),
+            gnome
+        );
+        assert_eq!(
+            desktop(&[("XDG_SESSION_DESKTOP", "plasma")]),
+            Some(LinuxDesktop::Kde)
+        );
+        assert_eq!(
+            desktop(&[
+                ("XDG_CURRENT_DESKTOP", " "),
+                ("XDG_SESSION_DESKTOP", "gnome")
+            ]),
+            gnome
+        );
+        assert_eq!(desktop(&[("XDG_CURRENT_DESKTOP", "::")]), None);
+        assert_eq!(desktop(&[]), None);
     }
 
     #[test]

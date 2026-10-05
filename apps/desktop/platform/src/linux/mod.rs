@@ -27,6 +27,6 @@ pub use desktop::{App, DesktopFiles, Hints};
 pub use gnome::{EXTENSION_UUID, ExtensionState, GnomeWindow};
 pub use lock::LinuxSessionLock;
 pub use mutter::MutterIdle;
-pub use portal::{ANSWER_WITHIN, PortalCapture, TOKEN_SECRET};
+pub use portal::{ANSWER_WITHIN, Consent, PortalCapture, TOKEN_SECRET};
 pub use wayland::WaylandIdle;
 pub use x11::{X11Capture, X11Idle, X11Input, X11Window};

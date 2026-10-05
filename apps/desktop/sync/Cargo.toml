@@ -12,6 +12,7 @@ serde_json = "1.0.149"
 # Blocking HTTP with the OS TLS stack; the agent's workers are threads, not an async runtime.
 ureq = { version = "3.4.2", default-features = false, features = ["native-tls"] }
 worklume-core = { path = "../core" }
+worklume-platform = { path = "../platform" }
 worklume-storage = { path = "../storage" }
 
 [dev-dependencies]

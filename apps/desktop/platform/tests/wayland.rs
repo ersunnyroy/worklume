@@ -7,6 +7,7 @@
 #![allow(
     clippy::expect_used,
     clippy::unwrap_used,
+    clippy::panic,
     reason = "a test fails loudly when its compositor is missing"
 )]
 
@@ -25,9 +26,11 @@ use wayland_client::{Connection, Dispatch, EventQueue, QueueHandle, delegate_noo
 use wayland_protocols_wlr::virtual_pointer::v1::client::{
     zwlr_virtual_pointer_manager_v1, zwlr_virtual_pointer_v1,
 };
+use worklume_platform::fake::MemorySecretStore;
 use worklume_platform::linux::WaylandIdle;
 use worklume_platform::{
-    ActiveSpan, ActivitySpans, Clock, IDLE_AFTER_MS, IdleSource, OsClock, SensorError,
+    ActiveSpan, ActivitySpans, CapabilityReason, CapabilityStatus, Clock, DeviceSensors, Feature,
+    IDLE_AFTER_MS, IdleSource, OsClock, ReportedPlatform, SecretStore, SensorError,
 };
 
 /// How far a notice may land from the moment the test expects, in milliseconds: the
@@ -273,4 +276,109 @@ fn a_compositor_that_goes_away_is_reported_and_dropping_the_reader_is_prompt() {
     let dropped = Instant::now();
     drop(idle);
     assert!(dropped.elapsed() < Duration::from_secs(1));
+}
+
+/// Set for the child that prints its session's report.
+const REPORT_CHILD: &str = "WORKLUME_TEST_REPORT_CHILD";
+
+/// Prints the report of the session it runs in; only in the child of the test below, which
+/// sets up that session's variables.
+#[test]
+#[ignore = "run by a_sway_session_reports_estimated_activity_and_no_app"]
+fn print_this_sessions_report() {
+    if std::env::var_os(REPORT_CHILD).is_none() {
+        return;
+    }
+    let clock: Arc<dyn Clock> = Arc::new(OsClock::new().expect("a clock"));
+    let secrets: Arc<dyn SecretStore> = Arc::new(MemorySecretStore::default());
+    let sensors = DeviceSensors::start(&clock, &secrets);
+    for problem in &sensors.problems {
+        println!("PROBLEM {problem}");
+    }
+    let report = sensors.report();
+    let features: Vec<String> = report
+        .iter()
+        .map(|(feature, capability)| {
+            let reasons: Vec<&str> = capability.reasons().iter().map(|r| r.as_str()).collect();
+            format!(
+                "{}:{}:{}",
+                feature.as_str(),
+                capability.status().as_str(),
+                reasons.join(",")
+            )
+        })
+        .collect();
+    println!(
+        "REPORT {} {:?} {}",
+        report.platform.as_str(),
+        report.desktop,
+        features.join(" ")
+    );
+}
+
+#[test]
+#[ignore = "needs sway"]
+fn a_sway_session_reports_estimated_activity_and_no_app() {
+    let sway = Sway::start();
+    let output = Command::new(std::env::current_exe().expect("the test binary"))
+        .args([
+            "--exact",
+            "print_this_sessions_report",
+            "--ignored",
+            "--nocapture",
+        ])
+        .env(REPORT_CHILD, "1")
+        .env(
+            "XDG_RUNTIME_DIR",
+            sway.socket().parent().expect("its folder"),
+        )
+        .env(
+            "WAYLAND_DISPLAY",
+            sway.socket().file_name().expect("a socket name"),
+        )
+        .env("XDG_SESSION_TYPE", "wayland")
+        .env("XDG_CURRENT_DESKTOP", "sway")
+        .env_remove("DISPLAY")
+        .output()
+        .expect("the child ran");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let line = stdout
+        .lines()
+        .find_map(|line| line.strip_prefix("REPORT "))
+        .unwrap_or_else(|| panic!("no report in {stdout}"));
+    assert!(!stdout.contains("PROBLEM"), "{stdout}");
+    let mut words = line.split(' ');
+    assert_eq!(words.next(), Some(ReportedPlatform::LinuxWayland.as_str()));
+    assert_eq!(words.next(), Some("Some(Other)"));
+    let features: Vec<&str> = words.collect();
+    let feature = |wanted: Feature| {
+        features
+            .iter()
+            .find(|text| text.split(':').next() == Some(wanted.as_str()))
+            .copied()
+            .unwrap_or_else(|| panic!("{wanted:?} missing from {line}"))
+    };
+    let (idle, _clock) = reader(&sway);
+    let mut activity = vec![
+        CapabilityReason::EstimatedFromIdle.as_str(),
+        CapabilityReason::NoKeyboardMouseSplit.as_str(),
+    ];
+    if !idle.ignores_inhibitors() {
+        activity.push(CapabilityReason::IdleInhibitorsCountAsActive.as_str());
+    }
+    assert_eq!(
+        feature(Feature::Activity),
+        format!(
+            "activity:{}:{}",
+            CapabilityStatus::Reduced.as_str(),
+            activity.join(",")
+        )
+    );
+    assert_eq!(feature(Feature::Idle), "idle:granted:");
+    // sway has no Worklume interface for the app in front.
+    assert_eq!(
+        feature(Feature::Apps),
+        "apps:unsupported:desktop_unsupported"
+    );
+    assert_eq!(feature(Feature::Urls), "urls:unsupported:not_implemented");
 }

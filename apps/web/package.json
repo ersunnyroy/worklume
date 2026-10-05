@@ -17,6 +17,7 @@
   "dependencies": {
     "@tanstack/react-query": "5.103.1",
     "@tanstack/react-router": "1.170.38",
+    "@worklume/api-client": "workspace:*",
     "i18next": "26.4.2",
     "radix-ui": "1.6.7",
     "react": "19.3.0",

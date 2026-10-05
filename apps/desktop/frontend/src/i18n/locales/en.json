@@ -88,5 +88,43 @@
   "duration": {
     "minutes": "{{minutes}} min",
     "hoursMinutes": "{{hours}} h {{minutes}} min"
+  },
+  "limits": {
+    "heading": "On this desktop",
+    "askAgain": "Ask me again",
+    "feature": {
+      "screenshots": "Screenshots",
+      "activity": "Activity",
+      "idle": "Idle time",
+      "apps": "Apps used",
+      "urls": "Websites visited",
+      "session_lock": "Screen lock"
+    },
+    "status": {
+      "granted": "Measured",
+      "reduced": "Reduced",
+      "pending": "Waiting",
+      "denied": "Off",
+      "unsupported": "Not available",
+      "failed": "Not working"
+    },
+    "reason": {
+      "not_implemented": "This version of Worklume can't measure this on your system yet.",
+      "no_graphical_session": "Worklume isn't running in a desktop session.",
+      "adapter_failed": "Worklume couldn't read this. It checks again every minute; details are in its log.",
+      "permission_denied": "Your system didn't give Worklume permission for this.",
+      "consent_not_asked": "Your desktop will ask you once to share your screen, when the first screenshot is due.",
+      "consent_dialog_open": "Your desktop is asking you to share your screen.",
+      "consent_declined": "You declined screen sharing, so no screenshots are taken. If you ask again, your desktop asks you at the next screenshot.",
+      "no_screencast_portal": "Your desktop doesn't offer screen sharing to apps.",
+      "estimated_from_idle": "Measured second by second from when you go idle, rather than from each key press and click.",
+      "idle_time_only": "Measured from your idle time only.",
+      "no_keyboard_mouse_split": "Keyboard and mouse aren't counted separately.",
+      "idle_inhibitors_count_as_active": "While a video or another app keeps your screen awake, you count as active.",
+      "gnome_extension_next_login": "Starts after you next log in to your desktop.",
+      "gnome_extension_disabled": "The Worklume extension is turned off. Turn on “Worklume active window” in the Extensions app.",
+      "gnome_extension_failed": "GNOME couldn't run the Worklume extension.",
+      "desktop_unsupported": "Your desktop doesn't let apps read this."
+    }
   }
 }

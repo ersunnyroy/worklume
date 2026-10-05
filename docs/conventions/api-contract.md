@@ -36,6 +36,18 @@ Drift is caught from both sides:
   agent fails the JavaScript test. The desktop package's Turborepo test inputs include the
   fixture.
 
+## Desktop capabilities: agent and contract in step
+
+`PUT /v1/desktop/capabilities` and `DesktopCapabilities` came with the agent's capability report
+(E13-S02, desktop half); the API side arrives with E07-S06. The same two-sided check as for
+events applies: `apps/desktop/sync/tests/capabilities_fixture.rs` writes sample reports, encoded
+as the agent sends them, with every status and reason code the agent knows, to
+`test/fixtures/desktop-capabilities.json`; `test/desktop-capabilities.test.js` validates the
+reports against the schema and requires the agent's codes to equal the schema's enums. A status
+other than `granted` must carry a reason, and `granted` none (an `if`/`then`/`else` in the
+schema). The status set extends the database notes' three values; the reasoning is in
+`docs/conventions/desktop.md`, "Capability report".
+
 ## Conventions as lint rules
 
 The API catalog's conventions that a machine can check are Spectral rules (see the package

@@ -33,11 +33,15 @@ use std::time::{Duration, Instant};
 use dbus::Message;
 use dbus::arg::{PropMap, RefArg, Variant};
 use dbus::blocking::Connection;
+use dbus::blocking::stdintf::org_freedesktop_dbus::Properties;
 use dbus::message::MatchRule;
 use zeroize::Zeroizing;
 
 use super::bus::ABSENT;
-use crate::{Frame, Monitor, Monitors, ScreenCapture, SecretStore, SensorError};
+use crate::{
+    Capability, CapabilityProbe, CapabilityReason, CapabilityStatus, Frame, Monitor, Monitors,
+    ScreenCapture, SecretStore, SensorError,
+};
 
 /// The credential store entry holding the restore token.
 pub const TOKEN_SECRET: &str = "screencast-restore-token";
@@ -51,6 +55,9 @@ const DIALOG_WITHIN: Duration = Duration::from_mins(10);
 const CALL_TIMEOUT: Duration = Duration::from_secs(25);
 /// How long the frames may take once the streams are open.
 const FRAMES_WITHIN: Duration = Duration::from_secs(5);
+/// How long asking whether the portal offers screen casts may take, for the capability report:
+/// the first call may start the portal, which first starts its backends.
+const PROBE_TIMEOUT: Duration = Duration::from_secs(5);
 
 const PORTAL: &str = "org.freedesktop.portal.Desktop";
 const OBJECT: &str = "/org/freedesktop/portal/desktop";
@@ -78,6 +85,23 @@ struct State {
     busy: bool,
     /// The member cancelled the dialog.
     declined: bool,
+    /// Whether the portal offers screen casts, once known.
+    offered: Option<bool>,
+}
+
+/// Where the member's consent stands.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Consent {
+    /// The desktop asks at the first capture.
+    NotAsked,
+    /// The dialog is up.
+    Asking,
+    /// A restore token is held: captures need no dialog.
+    Granted,
+    /// The member cancelled the dialog; not asked again until [`PortalCapture::ask_again`].
+    Declined,
+    /// The desktop has no screen-cast portal.
+    Unsupported,
 }
 
 /// One shared monitor's stream.
@@ -111,9 +135,11 @@ impl PortalCapture {
         }
     }
 
-    /// Lets the next capture ask the member again after they cancelled.
-    pub fn ask_again(&self) {
-        lock(&self.shared.state).declined = false;
+    /// Lets the next capture ask the member again after they cancelled. Returns whether they
+    /// had.
+    #[must_use]
+    pub fn ask_again(&self) -> bool {
+        std::mem::take(&mut lock(&self.shared.state).declined)
     }
 
     /// Whether a restore token is held: captures then need no dialog, unless the member revoked
@@ -121,6 +147,85 @@ impl PortalCapture {
     #[must_use]
     pub fn consented(&self) -> bool {
         lock(&self.shared.state).token.is_some()
+    }
+
+    /// Where the member's consent stands. Reads the token from the credential store if no
+    /// capture has yet, and asks the portal once whether it offers screen casts.
+    #[must_use]
+    pub fn consent(&self) -> Consent {
+        {
+            let mut state = lock(&self.shared.state);
+            self.shared.load(&mut state);
+            if let Some(consent) = state.consent() {
+                return consent;
+            }
+        }
+        // Asked without the lock held: a capture must not wait behind it.
+        let offered = offers_screencast();
+        let mut state = lock(&self.shared.state);
+        if state.offered.is_none() {
+            state.offered = offered;
+        }
+        state.consent().unwrap_or(Consent::NotAsked)
+    }
+}
+
+impl State {
+    /// The consent, unless it depends on whether the portal offers screen casts and that isn't
+    /// known yet.
+    const fn consent(&self) -> Option<Consent> {
+        if self.declined {
+            Some(Consent::Declined)
+        } else if self.token.is_some() {
+            Some(Consent::Granted)
+        } else if self.busy {
+            Some(Consent::Asking)
+        } else {
+            match self.offered {
+                Some(true) => Some(Consent::NotAsked),
+                Some(false) => Some(Consent::Unsupported),
+                None => None,
+            }
+        }
+    }
+}
+
+impl CapabilityProbe for PortalCapture {
+    fn capability(&self) -> Capability {
+        use CapabilityReason as Why;
+        use CapabilityStatus as Status;
+        match self.consent() {
+            Consent::Granted => Capability::granted(),
+            Consent::NotAsked => Capability::limited(Status::Pending, Why::ConsentNotAsked, &[]),
+            Consent::Asking => Capability::limited(Status::Pending, Why::ConsentDialogOpen, &[]),
+            Consent::Declined => Capability::limited(Status::Denied, Why::ConsentDeclined, &[]),
+            Consent::Unsupported => {
+                Capability::limited(Status::Unsupported, Why::NoScreencastPortal, &[])
+            }
+        }
+    }
+}
+
+/// Whether the session's portal offers screen casts: `None` when it can't be told now.
+fn offers_screencast() -> Option<bool> {
+    let conn = Connection::new_session().ok()?;
+    let version = conn
+        .with_proxy(PORTAL, OBJECT, PROBE_TIMEOUT)
+        .get::<u32>(SCREENCAST, "version");
+    match version {
+        Ok(_) => Some(true),
+        Err(error) => match error.name() {
+            // No portal at all, or one without the interface (its backend lacks it).
+            Some(name)
+                if ABSENT.contains(&name)
+                    || name == "org.freedesktop.DBus.Error.UnknownInterface"
+                    || name == "org.freedesktop.DBus.Error.UnknownProperty"
+                    || name == "org.freedesktop.DBus.Error.InvalidArgs" =>
+            {
+                Some(false)
+            }
+            _ => None,
+        },
     }
 }
 
@@ -140,11 +245,7 @@ impl ScreenCapture for PortalCapture {
             if state.declined || state.busy {
                 return Err(SensorError::PermissionDenied);
             }
-            if !state.loaded {
-                // A credential store that fails reads as no token: the member is asked again.
-                state.token = self.shared.secrets.get(TOKEN_SECRET).ok().flatten();
-                state.loaded = true;
-            }
+            self.shared.load(&mut state);
             state.busy = true;
             state.token.clone()
         };
@@ -178,6 +279,15 @@ impl ScreenCapture for PortalCapture {
 }
 
 impl Shared {
+    /// Reads the token from the credential store, once. A store that fails reads as no token:
+    /// the member is asked again.
+    fn load(&self, state: &mut State) {
+        if !state.loaded {
+            state.token = self.secrets.get(TOKEN_SECRET).ok().flatten();
+            state.loaded = true;
+        }
+    }
+
     /// Keeps what a session learned, and turns its outcome into the capture's.
     fn settle(
         &self,
@@ -194,6 +304,7 @@ impl Shared {
                     drop(self.secrets.set(TOKEN_SECRET, &token));
                     state.token = Some(token);
                 }
+                state.offered = Some(true);
                 *lock(&self.monitors) = frames.iter().map(|frame| frame.monitor.clone()).collect();
                 Ok(frames)
             }
@@ -203,7 +314,10 @@ impl Shared {
                 drop(self.secrets.delete(TOKEN_SECRET));
                 Err(SensorError::PermissionDenied)
             }
-            Err(Failure::Unsupported) => Err(SensorError::Unsupported),
+            Err(Failure::Unsupported) => {
+                state.offered = Some(false);
+                Err(SensorError::Unsupported)
+            }
             Err(Failure::Failed(error)) => Err(SensorError::Failed(error)),
         }
     }

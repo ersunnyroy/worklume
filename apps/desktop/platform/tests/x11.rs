@@ -16,8 +16,9 @@ use std::path::PathBuf;
 use worklume_platform::fake::MemorySecretStore;
 use worklume_platform::linux::{X11Capture, X11Idle, X11Input, X11Window};
 use worklume_platform::{
-    ActiveWindow, Clock, DeviceSensors, ForegroundApp, Frame, IdleSource, InputActivity,
-    InputEvent, InputKind, Monitors, OsClock, ScreenCapture, SecretStore, SensorError,
+    ActiveWindow, CapabilityReason, CapabilityStatus, Clock, DeviceSensors, Feature, ForegroundApp,
+    Frame, IdleSource, InputActivity, InputEvent, InputKind, Monitors, OsClock, ReportedPlatform,
+    ScreenCapture, SecretStore, SensorError,
 };
 use x11rb::COPY_DEPTH_FROM_PARENT;
 use x11rb::connection::Connection;
@@ -380,6 +381,48 @@ fn an_x11_session_gets_the_x11_adapters() {
     hands.key();
     hands.sync();
     sleep(Duration::from_millis(200));
+    let events = sensors.input.drain().expect("the reader works");
+    assert_eq!(count(&events, InputKind::Key), 1);
+
+    // The report: everything an X11 session offers, nothing claimed for browser addresses.
+    let report = sensors.report();
+    assert_eq!(report.platform, ReportedPlatform::LinuxX11);
+    for feature in [
+        Feature::Screenshots,
+        Feature::Activity,
+        Feature::Idle,
+        Feature::Apps,
+    ] {
+        assert_eq!(
+            report.get(feature).status(),
+            CapabilityStatus::Granted,
+            "{report}"
+        );
+    }
+    assert_eq!(
+        report.get(Feature::Urls).reasons(),
+        [CapabilityReason::NotImplemented]
+    );
+    // The lock comes from logind or a screen saver, which a test bus may lack: the report
+    // follows the reading.
+    let lock = report.get(Feature::SessionLock);
+    let expected = match sensors.lock.locked() {
+        Ok(_) => (CapabilityStatus::Granted, &[][..]),
+        Err(SensorError::Unsupported) => (
+            CapabilityStatus::Unsupported,
+            &[CapabilityReason::DesktopUnsupported][..],
+        ),
+        Err(_) => (
+            CapabilityStatus::Failed,
+            &[CapabilityReason::AdapterFailed][..],
+        ),
+    };
+    assert_eq!((lock.status(), lock.reasons()), expected, "{report}");
+    // Reading for the report took nothing from the timekeeper's input.
+    hands.key();
+    hands.sync();
+    sleep(Duration::from_millis(200));
+    drop(sensors.report());
     let events = sensors.input.drain().expect("the reader works");
     assert_eq!(count(&events, InputKind::Key), 1);
 }

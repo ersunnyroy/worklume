@@ -55,3 +55,12 @@ the real policy and fails on any CSP violation.
 
 Playwright starts `vite preview` directly, not through `pnpm preview`. Through the package-manager
 wrapper the preview process survived Playwright's shutdown signal and the run never exited.
+
+## Components ahead of their pages
+
+`src/components/devices` (E13-S02) holds the device capability badge and explanation before the
+devices page exists (E07-S07 needs the API). They are typed from the contract through
+`@worklume/api-client`, a type-only import that adds nothing to the bundle, and their tests read
+the desktop agent's fixture (`packages/api-contract/test/fixtures/desktop-capabilities.json`), so
+a reason code the agent starts sending without words here fails the build. The web app's Turbo
+`test` and `typecheck` inputs include that fixture.

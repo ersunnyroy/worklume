@@ -20,7 +20,10 @@ use uuid::Uuid;
 use worklume_core::catalog::{Catalog, CatalogError};
 use worklume_core::tracker::PauseReason;
 use worklume_core::view::{Question, TimerStatus, TimerView};
-use worklume_platform::{LinuxSession, OperatingSystem, PlatformInfo};
+use worklume_platform::{
+    CapabilityReason, CapabilityReport, CapabilityStatus, Feature, LinuxSession, OperatingSystem,
+    PlatformInfo,
+};
 
 use crate::agent::{Agent, AgentError, AgentState, IdleAnswer, Unavailable};
 
@@ -39,8 +42,10 @@ pub fn builder<R: Runtime>() -> Builder<R> {
             break_start,
             break_end,
             idle_answer,
+            device_capabilities,
+            screenshots_ask_again,
         ])
-        .events(collect_events![AgentChanged])
+        .events(collect_events![AgentChanged, CapabilitiesChanged])
 }
 
 /// What the agent is and where it runs, for the UI's about section and support requests.
@@ -505,4 +510,155 @@ pub fn idle_answer(agent: State<'_, Agent>, answer: IdleAnswerDto) -> TimerResul
         },
     };
     done(agent.answer_idle(answer))
+}
+
+// --- What the device can measure (E13-S02) ------------------------------------------------------
+
+/// What the device can measure, feature by feature, for the window to explain what isn't
+/// fully available. Codes only; the window words them.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+pub struct CapabilitiesDto {
+    pub features: Vec<FeatureCapabilityDto>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+pub struct FeatureCapabilityDto {
+    pub feature: FeatureDto,
+    pub status: CapabilityStatusDto,
+    /// Empty when granted; otherwise why, most important first.
+    pub reasons: Vec<CapabilityReasonDto>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "snake_case")]
+pub enum FeatureDto {
+    Screenshots,
+    Activity,
+    Idle,
+    Apps,
+    Urls,
+    SessionLock,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "snake_case")]
+pub enum CapabilityStatusDto {
+    Granted,
+    Reduced,
+    Pending,
+    Denied,
+    Unsupported,
+    Failed,
+}
+
+/// As the contract's `DesktopCapabilityReason`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "snake_case")]
+pub enum CapabilityReasonDto {
+    NotImplemented,
+    NoGraphicalSession,
+    AdapterFailed,
+    PermissionDenied,
+    ConsentNotAsked,
+    ConsentDialogOpen,
+    ConsentDeclined,
+    NoScreencastPortal,
+    EstimatedFromIdle,
+    IdleTimeOnly,
+    NoKeyboardMouseSplit,
+    IdleInhibitorsCountAsActive,
+    GnomeExtensionNextLogin,
+    GnomeExtensionDisabled,
+    GnomeExtensionFailed,
+    DesktopUnsupported,
+}
+
+/// Sent when what the device can measure changes; checked once a minute.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type, Event)]
+pub struct CapabilitiesChanged(pub CapabilitiesDto);
+
+impl From<&CapabilityReport> for CapabilitiesDto {
+    fn from(report: &CapabilityReport) -> Self {
+        Self {
+            features: report
+                .iter()
+                .map(|(feature, capability)| FeatureCapabilityDto {
+                    feature: feature.into(),
+                    status: capability.status().into(),
+                    reasons: capability
+                        .reasons()
+                        .iter()
+                        .map(|&reason| reason.into())
+                        .collect(),
+                })
+                .collect(),
+        }
+    }
+}
+
+impl From<Feature> for FeatureDto {
+    fn from(feature: Feature) -> Self {
+        match feature {
+            Feature::Screenshots => Self::Screenshots,
+            Feature::Activity => Self::Activity,
+            Feature::Idle => Self::Idle,
+            Feature::Apps => Self::Apps,
+            Feature::Urls => Self::Urls,
+            Feature::SessionLock => Self::SessionLock,
+        }
+    }
+}
+
+impl From<CapabilityStatus> for CapabilityStatusDto {
+    fn from(status: CapabilityStatus) -> Self {
+        match status {
+            CapabilityStatus::Granted => Self::Granted,
+            CapabilityStatus::Reduced => Self::Reduced,
+            CapabilityStatus::Pending => Self::Pending,
+            CapabilityStatus::Denied => Self::Denied,
+            CapabilityStatus::Unsupported => Self::Unsupported,
+            CapabilityStatus::Failed => Self::Failed,
+        }
+    }
+}
+
+impl From<CapabilityReason> for CapabilityReasonDto {
+    fn from(reason: CapabilityReason) -> Self {
+        use CapabilityReason as Why;
+        match reason {
+            Why::NotImplemented => Self::NotImplemented,
+            Why::NoGraphicalSession => Self::NoGraphicalSession,
+            Why::AdapterFailed => Self::AdapterFailed,
+            Why::PermissionDenied => Self::PermissionDenied,
+            Why::ConsentNotAsked => Self::ConsentNotAsked,
+            Why::ConsentDialogOpen => Self::ConsentDialogOpen,
+            Why::ConsentDeclined => Self::ConsentDeclined,
+            Why::NoScreencastPortal => Self::NoScreencastPortal,
+            Why::EstimatedFromIdle => Self::EstimatedFromIdle,
+            Why::IdleTimeOnly => Self::IdleTimeOnly,
+            Why::NoKeyboardMouseSplit => Self::NoKeyboardMouseSplit,
+            Why::IdleInhibitorsCountAsActive => Self::IdleInhibitorsCountAsActive,
+            Why::GnomeExtensionNextLogin => Self::GnomeExtensionNextLogin,
+            Why::GnomeExtensionDisabled => Self::GnomeExtensionDisabled,
+            Why::GnomeExtensionFailed => Self::GnomeExtensionFailed,
+            Why::DesktopUnsupported => Self::DesktopUnsupported,
+        }
+    }
+}
+
+/// What the device can measure, as last checked; `None` before the first check.
+#[tauri::command]
+#[specta::specta]
+#[must_use]
+pub fn device_capabilities(agent: State<'_, Agent>) -> Option<CapabilitiesDto> {
+    agent.capabilities().as_ref().map(CapabilitiesDto::from)
+}
+
+/// After the member declined to share their screen, lets the next screenshot ask them again.
+/// Returns whether they had declined; `CapabilitiesChanged` follows with the new state.
+#[tauri::command]
+#[specta::specta]
+#[must_use]
+pub fn screenshots_ask_again(agent: State<'_, Agent>) -> bool {
+    agent.ask_again_for_screen_sharing()
 }

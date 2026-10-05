@@ -14,7 +14,8 @@
 //!   installed extension at the member's next login. The reader then turns it on, once per run
 //!   of the agent, as the Extensions app would; if the member turns it off again, it stays off.
 //!   Until GNOME Shell answers (it may still be starting), it asks again every 30 seconds.
-//!   [`GnomeWindow::extension`] says where the extension stands, for the capability report.
+//!   [`GnomeWindow::extension`] says where the extension stands; the capability report
+//!   (`CapabilityProbe`) explains a reading that isn't there with it.
 //! - The extension answers only the installed agent: anything else reads `PermissionDenied`.
 //! - Each reading is one D-Bus call with a 250 ms timeout. A failed call reconnects on the next.
 
@@ -29,7 +30,10 @@ use dbus::blocking::Connection;
 
 use super::bus::{ABSENT, Bus};
 use crate::linux::desktop::{App, DesktopFiles, Hints};
-use crate::{ActiveWindow, ForegroundApp, SensorError};
+use crate::{
+    ActiveWindow, Capability, CapabilityProbe, CapabilityReason, CapabilityStatus, ForegroundApp,
+    SensorError,
+};
 
 /// The extension's UUID, as GNOME Shell knows it.
 pub const EXTENSION_UUID: &str = "active-window@worklume.com";
@@ -46,6 +50,11 @@ const TIMEOUT: Duration = Duration::from_millis(250);
 const ENABLE_TIMEOUT: Duration = Duration::from_secs(1);
 /// How often to ask GNOME Shell about the extension again while it doesn't answer.
 const RETRY_EVERY: Duration = Duration::from_secs(30);
+/// How long the extension may take to answer once GNOME Shell turned it on: the Shell reports
+/// the new state, and the extension takes its bus name, a moment after saying yes.
+const STARTING_WITHIN: Duration = Duration::from_secs(3);
+/// How often to ask again meanwhile.
+const STARTING_POLL: Duration = Duration::from_millis(100);
 /// How often the entries may be read again for an app no entry matched.
 const RELOAD_EVERY: Duration = Duration::from_mins(5);
 /// Apps kept; beyond it the cache starts again.
@@ -76,6 +85,8 @@ pub struct GnomeWindow {
 struct Enabling {
     done: bool,
     tried: Option<Instant>,
+    /// When GNOME Shell said it turned the extension on.
+    enabled: Option<Instant>,
 }
 
 struct Apps {
@@ -170,7 +181,9 @@ impl GnomeWindow {
             Ok(ExtensionState::Disabled) => {
                 enabling.done = true;
                 // A refusal shows as the extension still not answering.
-                drop(self.enable_extension());
+                if self.enable_extension().is_ok() {
+                    enabling.enabled = Some(Instant::now());
+                }
             }
             Ok(_) => enabling.done = true,
             // GNOME Shell may still be starting.
@@ -261,6 +274,79 @@ impl ActiveWindow for GnomeWindow {
     }
 }
 
+impl CapabilityProbe for GnomeWindow {
+    /// Reads the app in front, without its title; when the extension doesn't answer, asks
+    /// GNOME Shell why. Reading may turn the extension on, so a reading that failed is tried
+    /// again once the Shell says it is on.
+    fn capability(&self) -> Capability {
+        match self.foreground(false) {
+            Err(SensorError::Unsupported) => {}
+            reading => return reading_capability(&reading),
+        }
+        // Just turned on, by this reading or a recent one: give it a moment to start.
+        let enabled = lock(&self.enabling).enabled;
+        if let Some(enabled) = enabled {
+            while enabled.elapsed() < STARTING_WITHIN {
+                match self.foreground(false) {
+                    Err(SensorError::Unsupported) => std::thread::sleep(STARTING_POLL),
+                    reading => return reading_capability(&reading),
+                }
+            }
+        }
+        match self.extension() {
+            Ok(ExtensionState::Enabled) => match self.foreground(false) {
+                Err(SensorError::Unsupported) => extension_capability(&Err(SensorError::Failed(
+                    "enabled but not answering".to_owned(),
+                ))),
+                reading => reading_capability(&reading),
+            },
+            state => extension_capability(&state),
+        }
+    }
+}
+
+/// A reading's capability, the extension having answered.
+fn reading_capability(reading: &Result<Option<ForegroundApp>, SensorError>) -> Capability {
+    use CapabilityReason as Why;
+    use CapabilityStatus as Status;
+    match reading {
+        Ok(_) => Capability::granted(),
+        // The extension answers only the installed agent.
+        Err(SensorError::PermissionDenied) => {
+            Capability::limited(Status::Denied, Why::PermissionDenied, &[])
+        }
+        Err(SensorError::Unsupported) => {
+            Capability::limited(Status::Unsupported, Why::DesktopUnsupported, &[])
+        }
+        Err(SensorError::Failed(_)) => Capability::limited(Status::Failed, Why::AdapterFailed, &[]),
+    }
+}
+
+/// The capability while the extension doesn't answer, from where GNOME Shell says it stands.
+fn extension_capability(state: &Result<ExtensionState, SensorError>) -> Capability {
+    use CapabilityReason as Why;
+    use CapabilityStatus as Status;
+    match state {
+        Ok(ExtensionState::NotLoaded) => {
+            Capability::limited(Status::Pending, Why::GnomeExtensionNextLogin, &[])
+        }
+        Ok(ExtensionState::Disabled) => {
+            Capability::limited(Status::Denied, Why::GnomeExtensionDisabled, &[])
+        }
+        // Enabled yet silent counts as broken.
+        Ok(ExtensionState::Failed | ExtensionState::Enabled) | Err(SensorError::Failed(_)) => {
+            Capability::limited(Status::Failed, Why::GnomeExtensionFailed, &[])
+        }
+        // No GNOME Shell: GNOME without it (Flashback), or it left.
+        Err(SensorError::Unsupported) => {
+            Capability::limited(Status::Unsupported, Why::DesktopUnsupported, &[])
+        }
+        Err(SensorError::PermissionDenied) => {
+            Capability::limited(Status::Denied, Why::PermissionDenied, &[])
+        }
+    }
+}
+
 impl fmt::Debug for GnomeWindow {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("GnomeWindow").finish_non_exhaustive()
@@ -281,4 +367,71 @@ fn sensor_error(error: &dbus::Error) -> SensorError {
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ExtensionState, extension_capability, reading_capability};
+    use crate::{CapabilityReason as Why, CapabilityStatus as Status, SensorError};
+
+    #[test]
+    fn the_extension_state_explains_a_missing_reading() {
+        for (state, status, reason) in [
+            (
+                Ok(ExtensionState::NotLoaded),
+                Status::Pending,
+                Why::GnomeExtensionNextLogin,
+            ),
+            (
+                Ok(ExtensionState::Disabled),
+                Status::Denied,
+                Why::GnomeExtensionDisabled,
+            ),
+            (
+                Ok(ExtensionState::Failed),
+                Status::Failed,
+                Why::GnomeExtensionFailed,
+            ),
+            (
+                Ok(ExtensionState::Enabled),
+                Status::Failed,
+                Why::GnomeExtensionFailed,
+            ),
+            (
+                Err(SensorError::Unsupported),
+                Status::Unsupported,
+                Why::DesktopUnsupported,
+            ),
+            (
+                Err(SensorError::Failed("timeout".to_owned())),
+                Status::Failed,
+                Why::GnomeExtensionFailed,
+            ),
+            (
+                Err(SensorError::PermissionDenied),
+                Status::Denied,
+                Why::PermissionDenied,
+            ),
+        ] {
+            let capability = extension_capability(&state);
+            assert_eq!(
+                (capability.status(), capability.reasons()),
+                (status, &[reason][..]),
+                "{state:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_reading_is_granted_even_with_nothing_in_front() {
+        assert_eq!(reading_capability(&Ok(None)).status(), Status::Granted);
+        assert_eq!(
+            reading_capability(&Err(SensorError::PermissionDenied)).reasons(),
+            [Why::PermissionDenied]
+        );
+        assert_eq!(
+            reading_capability(&Err(SensorError::Failed("bus".to_owned()))).reasons(),
+            [Why::AdapterFailed]
+        );
+    }
 }

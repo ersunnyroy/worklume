@@ -6,6 +6,7 @@ import {
   commands,
   events,
   type AgentStateDto,
+  type CapabilitiesDto,
   type CatalogDto,
   type TimerViewDto,
 } from './ipc/bindings.gen';
@@ -23,12 +24,18 @@ vi.mock('./ipc/bindings.gen', () => ({
     breakStart: vi.fn(),
     breakEnd: vi.fn(),
     idleAnswer: vi.fn(),
+    deviceCapabilities: vi.fn(),
+    screenshotsAskAgain: vi.fn(),
   },
-  events: { agentChanged: { listen: vi.fn() } },
+  events: {
+    agentChanged: { listen: vi.fn() },
+    capabilitiesChanged: { listen: vi.fn() },
+  },
 }));
 
 const mocked = vi.mocked(commands);
 const listen = vi.mocked(events.agentChanged.listen);
+const listenCapabilities = vi.mocked(events.capabilitiesChanged.listen);
 
 const WEBSITE = '0192f000-0000-7000-8000-000000000001';
 const SUPPORT = '0192f000-0000-7000-8000-000000000002';
@@ -89,6 +96,8 @@ async function renderApp(state: AgentStateDto, withCatalog: CatalogDto = catalog
   return view;
 }
 
+let pushCapabilities: (capabilities: CapabilitiesDto) => void = () => undefined;
+
 describe('App', () => {
   beforeEach(() => {
     mocked.agentStatus.mockResolvedValue({
@@ -99,6 +108,15 @@ describe('App', () => {
       emit = (state) => {
         act(() => {
           handler({ event: 'agent-changed', id: 1, payload: state });
+        });
+      };
+      return Promise.resolve(() => undefined);
+    });
+    mocked.deviceCapabilities.mockResolvedValue(null);
+    listenCapabilities.mockImplementation((handler) => {
+      pushCapabilities = (capabilities) => {
+        act(() => {
+          handler({ event: 'capabilities-changed', id: 2, payload: capabilities });
         });
       };
       return Promise.resolve(() => undefined);
@@ -322,5 +340,32 @@ describe('App', () => {
     await user.keyboard('{Enter}');
     expect(mocked.timerResume).toHaveBeenCalled();
     expect(await screen.findByRole('status')).toHaveTextContent('Tracking');
+  });
+
+  it('explains what this desktop does not let it measure, as the agent reports it', async () => {
+    await renderApp(ready(timer({})));
+    expect(screen.queryByRole('region', { name: 'On this desktop' })).not.toBeInTheDocument();
+
+    pushCapabilities({
+      features: [
+        { feature: 'screenshots', status: 'denied', reasons: ['consent_declined'] },
+        { feature: 'idle', status: 'granted', reasons: [] },
+      ],
+    });
+    const limits = screen.getByRole('region', { name: 'On this desktop' });
+    expect(limits).toHaveTextContent('Screenshots Off');
+    expect(limits).toHaveTextContent('You declined screen sharing, so no screenshots are taken.');
+    expect(await accessibilityViolations()).toEqual([]);
+
+    // Asking again goes to the agent, whose next report shows the screenshots waiting.
+    mocked.screenshotsAskAgain.mockResolvedValue(true);
+    await userEvent.setup().click(within(limits).getByRole('button', { name: 'Ask me again' }));
+    expect(mocked.screenshotsAskAgain).toHaveBeenCalledTimes(1);
+    pushCapabilities({
+      features: [{ feature: 'screenshots', status: 'pending', reasons: ['consent_not_asked'] }],
+    });
+    expect(screen.getByRole('region', { name: 'On this desktop' })).toHaveTextContent(
+      'Screenshots Waiting',
+    );
   });
 });

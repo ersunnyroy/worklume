@@ -36,5 +36,51 @@
       "retry": "Try again",
       "reference": "Reference: {{reference}}"
     }
+  },
+  "devices": {
+    "capabilities": {
+      "badge": "{{platform}}: reduced",
+      "platform": {
+        "macos": "macOS",
+        "windows": "Windows",
+        "linux_x11": "Linux X11",
+        "linux_wayland": "Wayland"
+      },
+      "heading": "What this device can't fully measure",
+      "feature": {
+        "screenshots": "Screenshots",
+        "activity": "Activity",
+        "idle": "Idle time",
+        "apps": "Apps",
+        "urls": "Websites",
+        "session_lock": "Screen lock"
+      },
+      "status": {
+        "granted": "Measured",
+        "reduced": "Reduced",
+        "pending": "Waiting for the member",
+        "denied": "Turned off",
+        "unsupported": "Not available",
+        "failed": "Not working"
+      },
+      "reason": {
+        "not_implemented": "This version of Worklume can't measure it on this operating system yet.",
+        "no_graphical_session": "The agent isn't running in a desktop session.",
+        "adapter_failed": "The agent couldn't read it. It checks again every minute.",
+        "permission_denied": "The operating system didn't give Worklume permission.",
+        "consent_not_asked": "The member's desktop asks them to share their screen at the first screenshot.",
+        "consent_dialog_open": "The member's desktop is asking them to share their screen.",
+        "consent_declined": "The member declined screen sharing, so no screenshots are taken. They can choose to be asked again in the Worklume app.",
+        "no_screencast_portal": "The member's desktop doesn't offer screen sharing to apps.",
+        "estimated_from_idle": "Estimated second by second from the desktop's idle notices, not from each key press and click.",
+        "idle_time_only": "Estimated from idle time only.",
+        "no_keyboard_mouse_split": "Keyboard and mouse aren't counted separately.",
+        "idle_inhibitors_count_as_active": "While a video or another app keeps the screen awake, the member counts as active.",
+        "gnome_extension_next_login": "Starts after the member next logs in to their desktop.",
+        "gnome_extension_disabled": "The member turned off the Worklume GNOME extension.",
+        "gnome_extension_failed": "GNOME couldn't run the Worklume extension.",
+        "desktop_unsupported": "The member's desktop doesn't let apps read it."
+      }
+    }
   }
 }

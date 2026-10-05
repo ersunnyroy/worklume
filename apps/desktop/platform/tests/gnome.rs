@@ -25,7 +25,9 @@ use dbus::channel::{MatchingReceiver, Sender};
 use dbus::message::{MatchRule, Message};
 use tempfile::TempDir;
 use worklume_platform::linux::{EXTENSION_UUID, ExtensionState, GnomeWindow};
-use worklume_platform::{ActiveWindow, ForegroundApp, SensorError};
+use worklume_platform::{
+    ActiveWindow, CapabilityProbe, CapabilityReason, CapabilityStatus, ForegroundApp, SensorError,
+};
 
 /// Tests share the bus names, so they take turns.
 static ONE_AT_A_TIME: Mutex<()> = Mutex::new(());
@@ -42,6 +44,10 @@ struct State {
     /// The Shell's state for the extension; `None` when it doesn't know it.
     extension: Option<f64>,
     asked_for_titles: u32,
+    /// The extension starts answering this long after being turned on, as in GNOME Shell.
+    starts_after_enable: Option<Duration>,
+    /// When the stand-in takes the extension's name.
+    start_at: Option<std::time::Instant>,
 }
 
 /// The Worklume extension and GNOME Shell's extensions service, on one connection.
@@ -58,6 +64,7 @@ impl Shell {
         let (ready_tx, ready_rx) = std::sync::mpsc::channel();
         let thread = std::thread::spawn({
             let state = Arc::clone(&state);
+            let state_for_loop = Arc::clone(&state);
             let stop = Arc::clone(&stop);
             move || {
                 let conn = Connection::new_session().expect("a session bus");
@@ -77,6 +84,20 @@ impl Shell {
                 ready_tx.send(()).expect("the test waits");
                 while !stop.load(Ordering::SeqCst) {
                     drop(conn.process(Duration::from_millis(20)));
+                    let due = {
+                        let mut state = lock(&state_for_loop);
+                        let due = state
+                            .start_at
+                            .is_some_and(|at| at <= std::time::Instant::now());
+                        if due {
+                            state.start_at = None;
+                        }
+                        due
+                    };
+                    if due {
+                        conn.request_name("com.worklume.ActiveWindow", false, true, true)
+                            .expect("the name is free");
+                    }
                 }
             }
         });
@@ -130,6 +151,9 @@ fn answer(call: &Message, state: &mut State) -> Message {
             let known = state.extension.is_some();
             if known {
                 state.extension = Some(1.0);
+                state.start_at = state
+                    .starts_after_enable
+                    .map(|delay| std::time::Instant::now() + delay);
             }
             call.method_return().append1(known)
         }
@@ -308,4 +332,94 @@ fn a_reading_turns_the_extension_on_once_the_shell_knows_it() {
     shell.set(|state| state.extension = Some(2.0));
     assert_eq!(window.foreground(false), Err(SensorError::Unsupported));
     assert_eq!(lock(&shell.state).extension, Some(2.0));
+}
+
+#[test]
+#[ignore = "needs a session bus"]
+fn the_report_says_why_apps_are_missing() {
+    let _turn = serial();
+    let dir = entries();
+    let report = |window: &GnomeWindow| {
+        let capability = window.capability();
+        (capability.status(), capability.reasons().to_vec())
+    };
+    {
+        let _shell = Shell::start(true);
+        assert_eq!(
+            report(&reader(dir.path())),
+            (CapabilityStatus::Granted, vec![])
+        );
+    }
+    {
+        // Installed since login.
+        let _shell = Shell::start(false);
+        assert_eq!(
+            report(&reader(dir.path())),
+            (
+                CapabilityStatus::Pending,
+                vec![CapabilityReason::GnomeExtensionNextLogin]
+            )
+        );
+    }
+    {
+        // Turned off: the report's reading turns it on, but it doesn't answer.
+        let shell = Shell::start(false);
+        shell.set(|state| state.extension = Some(2.0));
+        let window = reader(dir.path());
+        assert_eq!(
+            report(&window),
+            (
+                CapabilityStatus::Failed,
+                vec![CapabilityReason::GnomeExtensionFailed]
+            )
+        );
+        assert_eq!(lock(&shell.state).extension, Some(1.0));
+        // The member turns it off again.
+        shell.set(|state| state.extension = Some(2.0));
+        assert_eq!(
+            report(&window),
+            (
+                CapabilityStatus::Denied,
+                vec![CapabilityReason::GnomeExtensionDisabled]
+            )
+        );
+        shell.set(|state| state.extension = Some(4.0));
+        assert_eq!(
+            report(&window),
+            (
+                CapabilityStatus::Failed,
+                vec![CapabilityReason::GnomeExtensionFailed]
+            )
+        );
+        drop(shell);
+        // No GNOME Shell any more.
+        assert_eq!(
+            report(&window),
+            (
+                CapabilityStatus::Unsupported,
+                vec![CapabilityReason::DesktopUnsupported]
+            )
+        );
+    }
+    {
+        // Turned off at login: the report's reading turns it on, and it answers a moment later.
+        let shell = Shell::start(false);
+        shell.set(|state| {
+            state.extension = Some(2.0);
+            state.starts_after_enable = Some(Duration::from_millis(400));
+        });
+        assert_eq!(
+            report(&reader(dir.path())),
+            (CapabilityStatus::Granted, vec![])
+        );
+    }
+    let shell = Shell::start(true);
+    shell.set(|state| state.deny = true);
+    assert_eq!(
+        report(&reader(dir.path())),
+        (
+            CapabilityStatus::Denied,
+            vec![CapabilityReason::PermissionDenied]
+        )
+    );
 }

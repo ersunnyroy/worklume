@@ -8,6 +8,7 @@
 //! `worklume-platform`. [`agent`] runs the timekeeper on a background thread for the timer UI.
 
 pub mod agent;
+mod capability_watch;
 pub mod diagnostics;
 pub mod ipc;
 mod startup;
@@ -50,6 +51,7 @@ pub fn run() -> tauri::Result<()> {
             commands.mount_events(app);
             tray::install(app.handle())?;
             ticker::spawn(app.handle().clone())?;
+            capability_watch::spawn(app.handle().clone())?;
             Ok(())
         })
         .build(tauri::generate_context!())?;

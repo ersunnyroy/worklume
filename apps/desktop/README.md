@@ -15,8 +15,11 @@ Mutter or the compositor's idle notices (E13-S04), and on GNOME reads the app in
 its own GNOME Shell extension (`src-tauri/linux/gnome-extension`, E13-S05), and captures the
 screen through the desktop portal after the member allows it once (E13-S03). On both it pauses while the session is
 locked, and its packages start it at login through an XDG autostart entry (E12-S05).
-Elsewhere, sensors wait for their per-OS adapters (E10–E13) and read as unsupported.
-`cargo run -p worklume-platform --example sensors` shows what this session's sensors read.
+Elsewhere, sensors wait for their per-OS adapters (E10–E13) and read as unsupported. Once a
+minute the agent checks what it can measure on this desktop and shows what isn't fully
+available, with why, under "On this desktop" (E13-S02); sync will send the same report to the
+server. `cargo run -p worklume-platform --example sensors` shows what this session's sensors
+read, and that report.
 
 ## Layout
 
