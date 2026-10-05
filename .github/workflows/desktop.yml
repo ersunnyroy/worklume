@@ -139,3 +139,30 @@ jobs:
             target/release/bundle/appimage/*.AppImage
           if-no-files-found: error
           retention-days: 14
+
+  # The Wayland idle readers (E13-S04) against a real compositor and a stand-in for GNOME's
+  # Mutter. sway starts headless inside each test; Ubuntu 22.04's sway is too old to have
+  # ext-idle-notify-v1, so this runs on 24.04, apart from the 22.04 build.
+  wayland:
+    name: Wayland idle readers
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install sway and the D-Bus library
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends sway libdbus-1-dev pkg-config dbus
+
+      - name: Install the pinned Rust toolchain
+        run: rustup toolchain install
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+
+      - name: Test the Wayland idle readers (sway and a stand-in Mutter)
+        run: >-
+          dbus-run-session -- cargo test -p worklume-platform --features fake --test wayland
+          --test mutter --locked -- --ignored

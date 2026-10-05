@@ -14,9 +14,11 @@ use worklume_core::tracker::{
 };
 use worklume_core::usage::{PrivateWindows, UsageLevel, UsagePolicy};
 use worklume_platform::fake::{
-    FakeBrowser, FakeClock, FakeIdle, FakeInput, FakeLock, FakeWindow, MemorySecretStore,
+    FakeBrowser, FakeClock, FakeIdle, FakeInput, FakeLock, FakeSpans, FakeWindow, MemorySecretStore,
 };
-use worklume_platform::{BrowserTab, ClockReading, ForegroundApp, InputActivity, SensorError};
+use worklume_platform::{
+    ActivitySpans, BrowserTab, ClockReading, ForegroundApp, InputActivity, InputEvent, SensorError,
+};
 use worklume_storage::{StorageError, Store};
 use worklume_sync::envelope;
 
@@ -44,6 +46,18 @@ pub struct DeviceConfig {
     pub policy: IdlePolicy,
     /// The app and URL policy the agent starts with.
     pub usage: UsagePolicy,
+    /// How the agent sees input.
+    pub input: InputSource,
+}
+
+/// How the simulated agent sees the member's input.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum InputSource {
+    /// Every event, with its kind (macOS, Windows, X11).
+    #[default]
+    Events,
+    /// Active spans from a compositor's idle notifications, without kinds (Wayland, E13-S04).
+    Spans,
 }
 
 impl Default for DeviceConfig {
@@ -59,6 +73,7 @@ impl Default for DeviceConfig {
                 window_titles: true,
                 private_windows: PrivateWindows::DomainOnly,
             },
+            input: InputSource::Events,
         }
     }
 }
@@ -170,6 +185,7 @@ pub struct Device {
     window: Arc<FakeWindow>,
     browser: Arc<FakeBrowser>,
     input: Arc<FakeInput>,
+    spans: Arc<FakeSpans>,
     lock: Arc<FakeLock>,
     hands: Hands,
     /// Typing at the lock screen: never in the ledger, since none of it may count.
@@ -209,12 +225,20 @@ impl Device {
         let idle = Arc::new(FakeIdle::new(Arc::clone(&clock)));
         let window = Arc::new(FakeWindow::default());
         window.set(Some(editor()));
+        // The source the agent doesn't have reads as unsupported, as on a real device.
+        let input = Arc::new(FakeInput::default());
+        let spans = Arc::new(FakeSpans::new(Arc::clone(&clock)));
+        match config.input {
+            InputSource::Events => spans.set_error(Some(SensorError::Unsupported)),
+            InputSource::Spans => input.set_error(Some(SensorError::Unsupported)),
+        }
         let mut device = Self {
             clock,
             idle,
             window,
             browser: Arc::new(FakeBrowser::default()),
-            input: Arc::new(FakeInput::default()),
+            input,
+            spans,
             lock: Arc::new(FakeLock::default()),
             hands: Hands::default(),
             lock_hands: Hands::default(),
@@ -350,7 +374,7 @@ impl Device {
         self.pass(duration, Input::LockScreen)?;
         let now = self.clock.reading().mono_ms;
         let password = self.lock_hands.person(now - 900, now);
-        self.input.push(password);
+        self.push_input(password);
         self.idle.input();
         self.lock.set(false);
         Ok(())
@@ -368,9 +392,9 @@ impl Device {
             let from = self.clock.reading().mono_ms;
             self.clock.advance(step);
             let to = self.clock.reading().mono_ms;
-            let Some(agent) = self.agent.as_mut() else {
+            if self.agent.is_none() {
                 continue;
-            };
+            }
             let events = match input {
                 Input::Nobody => Vec::new(),
                 Input::Person => self.hands.person(from, to),
@@ -382,12 +406,24 @@ impl Device {
             if matches!(input, Input::Person | Input::LockScreen) || !events.is_empty() {
                 self.idle.input();
             }
-            self.input.push(events);
-            // Activity is measured from the events, as in the app (E12-S03).
+            self.push_input(events);
+            // Activity is measured from the events or the spans, as in the app (E12-S03,
+            // E13-S04).
+            let Some(agent) = self.agent.as_mut() else {
+                continue;
+            };
             let outcome = agent.keeper.tick_measured()?;
             self.record(outcome);
         }
         Ok(())
+    }
+
+    /// Input reaches the reader, or the compositor, whichever the agent has.
+    fn push_input(&self, events: Vec<InputEvent>) {
+        for event in &events {
+            self.spans.input(event.mono_ms);
+        }
+        self.input.push(events);
     }
 
     /// The device sleeps for `duration`. The agent sees it on its next tick.
@@ -468,17 +504,23 @@ impl Device {
         let store = Arc::new(store);
         // A new agent's input reader starts empty.
         drop(self.input.drain());
+        drop(self.spans.drain());
         let sensors = Sensors {
             clock: Arc::clone(&self.clock) as _,
             idle: Arc::clone(&self.idle) as _,
             window: Arc::clone(&self.window) as _,
             browser: Arc::clone(&self.browser) as _,
             input: Arc::clone(&self.input) as _,
+            spans: Arc::clone(&self.spans) as _,
             lock: Arc::clone(&self.lock) as _,
+        };
+        let method = match self.config.input {
+            InputSource::Events => InputMethod::Hooks,
+            InputSource::Spans => InputMethod::Portal,
         };
         let (mut keeper, recovery) = Timekeeper::open(
             Arc::clone(&store),
-            TrackerConfig::new(InputMethod::Hooks),
+            TrackerConfig::new(method),
             sensors,
             self.policy,
         )?;

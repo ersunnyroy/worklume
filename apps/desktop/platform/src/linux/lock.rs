@@ -7,7 +7,8 @@
 //!
 //! **The screen saver service** on the session bus answers where logind can't
 //! (`org.freedesktop.ScreenSaver`, then GNOME's `org.gnome.ScreenSaver`). Active means locked or
-//! blanked; either way the member is away.
+//! blanked; either way the member is away. A service that isn't running is never started by a
+//! reading.
 //!
 //! Each reading is one D-Bus call. A call that fails drops its connection, so the next reading
 //! connects again.
@@ -16,6 +17,7 @@ use std::fmt;
 use std::sync::{Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
+use dbus::Message;
 use dbus::blocking::Connection;
 use dbus::blocking::stdintf::org_freedesktop_dbus::Properties;
 
@@ -120,12 +122,13 @@ impl SessionLock for LinuxSessionLock {
         };
         for (service, path) in SCREEN_SAVERS {
             let active = session.call(|conn| {
-                let (active,): (bool,) = conn.with_proxy(service, path, TIMEOUT).method_call(
-                    service,
-                    "GetActive",
-                    (),
-                )?;
-                Ok(active)
+                let mut call = Message::new_method_call(service, path, service, "GetActive")
+                    .map_err(|error| dbus::Error::new_failed(&error))?;
+                // A reading never starts a screen saver that isn't running: its service file may
+                // be installed (GNOME Shell ships one) on a desktop that doesn't use it.
+                call.set_auto_start(false);
+                let reply = conn.channel().send_with_reply_and_block(call, TIMEOUT)?;
+                Ok(reply.read1::<bool>()?)
             });
             match active {
                 Ok(active) => return Ok(active),

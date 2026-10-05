@@ -495,15 +495,30 @@ time. Keyboard and mouse are measured the same way on their own.
   splits or double-counts a second: a single key press is one active second however the ticks
   fall, and continuous input makes the whole time active. Keys count for the keyboard;
   pointer moves, clicks and scrolls for the mouse.
-- **From the idle source** where there is no working event reader (Wayland, a denied
-  permission, a reader that failed): the combined figure. Each reading contributes the moment
-  of the last input, so continuous input still covers the whole time. Keyboard and mouse are
-  unknown, which makes the slot's `keyboard_seconds` and `mouse_seconds` null.
+- **From active spans** (E13-S04) where the OS reports bursts of activity rather than each input
+  (Wayland, see "Wayland sensors"): a span runs from a burst's first input to one second after
+  its last, which is exactly what the burst's events would count. An open span counts up to the
+  tick. The figure is combined: keyboard and mouse are null.
+- **From the idle source** where there is neither (a denied permission, a reader that failed):
+  the combined figure. Each reading contributes the moment of the last input, so continuous
+  input still covers the whole time, but an earlier input in the same tick is missed: on bursty
+  input this falls well short (in `simulation/tests/activity.rs`, 20 s active against 38 s).
+  Keyboard and mouse are unknown, which makes the slot's `keyboard_seconds` and
+  `mouse_seconds` null.
 - The meter remembers the last input of each kind, so a second that began in one tick counts in
   the next. A sleep, a lock or a new boot makes it forget.
 - `Timekeeper::tick_measured` and every timer action measure activity this way; the app and the
   simulation harness use them. `Timekeeper::tick(activity)` takes a given figure, for tests.
-- Slots report how input was measured: `hooks` with an event reader, `idle_poll` without.
+- Spans, like events, are cut at the lock floor; a span begun before it also loses the second
+  after it, which the lock screen's last input kept going. Typing a password never counts.
+- Slots report how input was measured: `hooks` with an event reader, `portal` with active spans,
+  `idle_poll` with neither.
+- **E13-S04's criterion, activity within 5 points of X11 on the same workload**, is checked two
+  ways. `simulation/tests/activity.rs` drives the meter with random input and tick timings and
+  requires spans and events to give the same milliseconds (they do, exactly). The harness
+  property `spans_measure_the_activity_events_do` plays generated scripts on a device that sees
+  events and on one that sees spans, and requires the same tracked time and activity within 5
+  points; they differ by under a second, around sleeps.
 
 ## Input timing features
 
@@ -640,14 +655,18 @@ E12-S02 to E12-S04, after the spike in `docs/spikes/E12-S01-x11.md`.
   one, falling back to `org.freedesktop.ScreenSaver` or `org.gnome.ScreenSaver` `GetActive` on
   the session bus. One D-Bus call per reading, with a 250 ms timeout; a failed call reconnects
   on the next reading. No service at all reads as `Unsupported`.
-- **`DeviceSensors::start`** picks the adapters for this session: on Linux the lock always, and
-  on X11 idle time, input, the window in front and screen capture too. What fails to start is logged once per attempt and reads as
-  `Unsupported`, and the agent tracks without it.
+- **`DeviceSensors::start`** picks the adapters for this session: on Linux the lock always; on
+  X11 idle time, input, the window in front and screen capture; on Wayland idle time and active
+  spans (see "Wayland sensors"), never the X11 adapters, though `DISPLAY` is set for Xwayland.
+  What fails to start is logged once per attempt and reads as `Unsupported`, and the agent
+  tracks without it. What a sensor that started can't measure well is logged as a limit, for
+  the capability report (E13-S02).
 
 **Decision: the `dbus` crate, not `zbus`.** The architecture names `zbus` for the Linux
 modules. The keychain adapter already links the system `libdbus` through the `dbus` crate, and
-the lock needs one blocking property read a second, so the agent keeps one D-Bus stack. `zbus`
-remains the choice if the Wayland work (E13) needs async D-Bus or portals.
+the lock needs one blocking property read a second, so the agent keeps one D-Bus stack. The
+GNOME idle reader (E13-S04) needs signals as well, which a blocking connection on a thread of
+its own handles; `zbus` remains the choice if a later story needs async D-Bus.
 
 **Tested.**
 
@@ -674,6 +693,57 @@ remains the choice if the Wayland work (E13) needs async D-Bus or portals.
 x11 -- --ignored`.
 - Not covered yet: real GNOME and KDE sessions, real mice and touchpads, and remote desktops
   (the E12 test matrix).
+
+## Wayland sensors
+
+E13-S04, after the spike in `docs/spikes/E13-S01-wayland.md`. Wayland gives no input events and
+no idle time to read; compositors instead notify when the member has been idle for a while and
+when they are back. `worklume-platform::spans` turns those notices into idle time and **active
+spans** (`ActivitySpans`), with one timeout, `IDLE_AFTER_MS` (1 s), so the spans count what the
+event meter counts. Both adapters implement `IdleSource` and `ActivitySpans`:
+
+- **`linux::MutterIdle`** (GNOME): Mutter's `IdleMonitor` on the session bus, which answers
+  any unsandboxed client without a prompt and which idle inhibitors don't affect.
+  - An idle watch at 1 s, and a "user active" watch, which fires once and is set again after
+    each idle notice: two signals per burst of input.
+  - `GetIdletime` at the start and on each idle notice gives the moment of the last input
+    exactly. An idle notice with a later last input than the one known means an input slipped
+    in before the "user active" watch was set again, and it counts its one second.
+  - Only signals from the bus name that owns the service count. Mutter leaving the bus is
+    reported on the next reading.
+  - All calls happen on the reader's thread, with a 5 s timeout and three tries: at login the
+    Shell took over half a second to answer. Idle time is unknown until the watches are set.
+- **`linux::WaylandIdle`** (KDE, wlroots and others): `ext-idle-notify-v1` through
+  `wayland-client`, pure Rust, so no `libwayland` is linked.
+  - Version 2's input notification, which ignores idle inhibitors, when the compositor has it.
+    With version 1 (KWin 5.27, sway 1.9), a window that inhibits idling, such as a video
+    playing, keeps the member active; `DeviceSensors` logs that as a limit.
+  - The compositor says nothing until the member has been idle for a second, so idle time is
+    unknown until then, and the first second counts as active only if no idle notice ends it.
+- Both read on a thread of their own, waking every half second to check whether to stop, and
+  stamp notices with the agent's clock as they arrive. A reader whose connection fails reports
+  it on the next reading, and activity falls back to the idle source.
+- `DeviceSensors` tries Mutter first, then `ext-idle-notify-v1`.
+
+**Tested.**
+
+- `spans` unit tests: bursts, spans ended between drains, startup, an unseen input, and the
+  bound on spans waiting. Meter and timekeeper tests: spans within an interval, events
+  preferred, failures falling back, and lock-screen input (the password included) never
+  counting.
+- `platform/tests/wayland.rs` starts a headless sway (wlroots, software rendering) in a private
+  runtime folder for each test, and moves a virtual pointer: a burst is one span from its first
+  input to a second after its last, separate bursts are separate spans, idle time, a
+  compositor that goes away, and dropping the reader.
+- `platform/tests/mutter.rs` runs against a stand-in `IdleMonitor` that keeps Mutter's rules:
+  exact idle time at the start, a burst's span, the watch set again for the next burst, active
+  at the start, signals from another client ignored, no Mutter, and Mutter leaving.
+- Both are ignored in ordinary runs. The `Desktop` workflow's `wayland` job runs them on Ubuntu
+  24.04, whose sway has `ext-idle-notify-v1` (22.04's doesn't).
+- Checked by hand with `cargo run -p worklume-platform --example sensors` on GNOME Shell 46
+  (nested) and KWin 5.27: a 1.2 s burst gave a 2.2 s span, a single key a 1 s span, and idle
+  time to the millisecond on GNOME. The example prints only times.
+- Not covered: real hardware and GPUs, Plasma 6, GNOME 47 and later.
 
 ## Agent UI
 
@@ -760,7 +830,9 @@ store to what the server received.
 
 **The device.** A `Device` runs the real `Timekeeper`, tracker and encrypted store in a
 temporary folder, on `FakeClock`, `FakeIdle`, `FakeWindow`, `FakeBrowser`, `FakeInput`,
-`FakeLock` and `MemorySecretStore`. Activity is measured from its input events, as in the app.
+`FakeSpans`, `FakeLock` and `MemorySecretStore`. Activity is measured from its input events, as
+in the app, or, with `InputSource::Spans`, from the active spans a compositor would report for
+the same input (`FakeSpans` runs the real adapters' `Transitions`).
 It can:
 
 - work (input every tick: uneven typing, clicks, mouse movements and scrolls, the same on

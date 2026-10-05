@@ -6,7 +6,10 @@ use std::time::Duration;
 use worklume_core::timekeeper::{IdlePolicy, KeepIdle, Outcome, Prompt, Sensors, Timekeeper};
 use worklume_core::tracker::{Activity, IdleResolution, TrackerState};
 use worklume_core::usage::UsagePolicy;
-use worklume_platform::fake::{FakeBrowser, FakeClock, FakeIdle, FakeInput, FakeLock, FakeWindow};
+use worklume_platform::SensorError;
+use worklume_platform::fake::{
+    FakeBrowser, FakeClock, FakeIdle, FakeInput, FakeLock, FakeSpans, FakeWindow,
+};
 
 use super::{Harness, START_WALL_MS, seconds, target};
 
@@ -34,6 +37,8 @@ pub struct Rig {
     pub window: Arc<FakeWindow>,
     pub browser: Arc<FakeBrowser>,
     pub input: Arc<FakeInput>,
+    /// Off (`Unsupported`) unless a test turns it on.
+    pub spans: Arc<FakeSpans>,
     pub lock: Arc<FakeLock>,
     pub keeper: Option<Timekeeper>,
     pub prompts: Vec<Prompt>,
@@ -44,6 +49,8 @@ impl Rig {
         let harness = Harness::new();
         let clock = Arc::new(FakeClock::new(START_WALL_MS));
         let idle = Arc::new(FakeIdle::new(Arc::clone(&clock)));
+        let spans = Arc::new(FakeSpans::new(Arc::clone(&clock)));
+        spans.set_error(Some(SensorError::Unsupported));
         let mut rig = Self {
             harness,
             clock,
@@ -51,6 +58,7 @@ impl Rig {
             window: Arc::new(FakeWindow::default()),
             browser: Arc::new(FakeBrowser::default()),
             input: Arc::new(FakeInput::default()),
+            spans,
             lock: Arc::new(FakeLock::default()),
             keeper: None,
             prompts: Vec::new(),
@@ -67,6 +75,7 @@ impl Rig {
             window: Arc::clone(&self.window) as _,
             browser: Arc::clone(&self.browser) as _,
             input: Arc::clone(&self.input) as _,
+            spans: Arc::clone(&self.spans) as _,
             lock: Arc::clone(&self.lock) as _,
         };
         let (keeper, _) = Timekeeper::open(
