@@ -1,4 +1,7 @@
 pnpm-lock.yaml
+# Composer writes these with its own formatting.
+apps/api/composer.json
+apps/api/composer.lock
 **/node_modules
 **/vendor
 **/dist
