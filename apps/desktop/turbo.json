@@ -4,7 +4,13 @@
   "tasks": {
     "lint": {
       "dependsOn": ["^build", "build"],
-      "passThroughEnv": ["CARGO_HOME", "RUSTUP_HOME", "RUSTUP_TOOLCHAIN", "CARGO_TARGET_DIR"]
+      "passThroughEnv": [
+        "CARGO_HOME",
+        "RUSTUP_HOME",
+        "RUSTUP_TOOLCHAIN",
+        "CARGO_TARGET_DIR",
+        "PKG_CONFIG_PATH"
+      ]
     },
     "test": {
       "dependsOn": ["^build", "build"],
@@ -14,7 +20,13 @@
         "$TURBO_ROOT$/packages/api-contract/test/fixtures/desktop-capabilities.json"
       ],
       "outputs": [],
-      "passThroughEnv": ["CARGO_HOME", "RUSTUP_HOME", "RUSTUP_TOOLCHAIN", "CARGO_TARGET_DIR"]
+      "passThroughEnv": [
+        "CARGO_HOME",
+        "RUSTUP_HOME",
+        "RUSTUP_TOOLCHAIN",
+        "CARGO_TARGET_DIR",
+        "PKG_CONFIG_PATH"
+      ]
     }
   }
 }

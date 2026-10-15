@@ -92,8 +92,8 @@ jobs:
         id: checks
         run: pnpm exec turbo run lint typecheck test --filter=@worklume/desktop
 
-      # Clippy errors and failed Rust tests are repeated as one annotation, so they show on the
-      # pull request without opening the full log. Everything is already built, so this adds
+      # Clippy errors, build failures (a build script or the linker) and failed Rust tests are
+      # repeated as one annotation, so they show on the pull request without opening the full log. Everything is already built, so this adds
       # about a minute. (The Actions bash shell sets pipefail; grep finding nothing is fine here.)
       - name: Annotate Rust failures
         if: failure() && steps.checks.outcome == 'failure'
@@ -101,7 +101,7 @@ jobs:
         run: |
           cargo clippy --workspace --all-targets --locked --message-format=short -- -D warnings > clippy.log 2>&1 || true
           cargo test --workspace --locked --no-fail-fast > cargo-test.log 2>&1 || true
-          { grep -E '^[^ ].*: (error|warning)' clippy.log || true; grep -E -A4 '^---- |panicked at' cargo-test.log || true; } > rust-failures.log
+          { grep -E '^[^ ].*: (error|warning)' clippy.log || true; grep -E -A15 '^error(\[|:)' clippy.log || true; grep -E -A4 '^---- |panicked at' cargo-test.log || true; } > rust-failures.log
           summary=$(head -80 rust-failures.log | sed 's/%/%25/g; s/\r//g' | awk '{printf "%s%%0A", $0}')
           if [ -n "$summary" ]; then
             echo "::error title=Rust failures::${summary}"

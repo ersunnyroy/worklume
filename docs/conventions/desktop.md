@@ -1268,6 +1268,9 @@ from the Ubuntu archive pinned by SHA-256) and links against 22.04's `libpipewir
 
 - The headers matter only at compile time: inline functions are compiled into the agent, and the
   structures the library shares with it (buffers, chunks) have not changed within 0.3.x and 1.x.
+- The job sets `PKG_CONFIG_PATH` to the script's folder. Turborepo passes only listed variables
+  to tasks, so the desktop's `lint` and `test` tasks list it in `passThroughEnv`; without it the
+  first attempt still compiled against 0.3.48's headers.
 - Linking against the old library keeps the build honest: a function 0.3.48 lacks fails the link
   rather than the agent's start on a member's machine. The agent uses 19 `pw_*` functions; 0.3.48
   exports all of them (checked with `nm`).
