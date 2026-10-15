@@ -1255,6 +1255,31 @@ screen capture (E13-S03).
 
 The package metadata (maintainer, long description) and the apt repository are E12-S06's.
 
+## PipeWire on Ubuntu 22.04
+
+The packages are built on Ubuntu 22.04 so they run on 22.04 and later. The `pipewire` crate
+(E13-S03) compiles only against newer PipeWire headers than 22.04's 0.3.48: it calls inline
+functions and reads struct fields 0.3.48's headers lack. Found in the first CI run after Actions
+started running again (2026-10-15).
+
+**Decision: newer headers, the old library.** The Ubuntu 22.04 job compiles against Ubuntu
+24.04's PipeWire 1.0.5 headers (`apps/desktop/scripts/pipewire-headers.sh`, two `-dev` packages
+from the Ubuntu archive pinned by SHA-256) and links against 22.04's `libpipewire-0.3.so`.
+
+- The headers matter only at compile time: inline functions are compiled into the agent, and the
+  structures the library shares with it (buffers, chunks) have not changed within 0.3.x and 1.x.
+- Linking against the old library keeps the build honest: a function 0.3.48 lacks fails the link
+  rather than the agent's start on a member's machine. The agent uses 19 `pw_*` functions; 0.3.48
+  exports all of them (checked with `nm`).
+- Checked by hand: the screen-capture tests (`platform/tests/portal.rs`) pass with the test
+  binary loading 22.04's `libpipewire` 0.3.48 and its plugins and modules, against PipeWire 1.0.5's
+  daemon. A 0.3.48 daemon wasn't tried; PipeWire keeps its native protocol compatible.
+
+Rejected: building on 24.04 (the packages would need glibc 2.39 and stop running on 22.04);
+dropping Wayland capture from the 22.04 build (it is the build the packages come from); a
+third-party PPA with a newer PipeWire (a supply-chain risk in CI, and the build would link against
+a library members don't have); an older `pipewire` crate (0.8 needs the same newer headers).
+
 ## Linux tray and autostart
 
 E12-S05. **The tray** is Tauri's: a `StatusNotifierItem` through `libayatana-appindicator`,

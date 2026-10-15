@@ -10,6 +10,13 @@
 //!
 //! [`Transitions`] turns the notifications into spans and idle time for both adapters.
 
+// Only the Linux adapters and the fakes drive the transitions; on macOS and Windows parts of
+// them go unused until their span sources exist.
+#![cfg_attr(
+    not(target_os = "linux"),
+    allow(dead_code, reason = "used by the Linux adapters and the fakes only")
+)]
+
 use std::collections::VecDeque;
 use std::fmt;
 use std::time::Duration;

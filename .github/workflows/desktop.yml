@@ -65,6 +65,14 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev libssl-dev patchelf libdbus-1-dev pkg-config gnome-keyring xvfb libpipewire-0.3-dev libclang-dev
 
+      # Ubuntu 22.04's PipeWire (0.3.48) is older than the pipewire crate's headers need. Build
+      # against Ubuntu 24.04's PipeWire 1.0.5 headers, still linking against 22.04's library, so a
+      # function 0.3.48 lacks fails the link (docs/conventions/desktop.md, "PipeWire on Ubuntu
+      # 22.04").
+      - name: Use newer PipeWire headers (Ubuntu 22.04)
+        if: matrix.os == 'ubuntu-22.04'
+        run: echo "PKG_CONFIG_PATH=$(apps/desktop/scripts/pipewire-headers.sh "$RUNNER_TEMP/pipewire")" >> "$GITHUB_ENV"
+
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version-file: .node-version
