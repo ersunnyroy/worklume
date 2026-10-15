@@ -141,8 +141,9 @@ jobs:
           retention-days: 14
 
   # The Wayland readers against real services and stand-ins: idle time against a headless sway
-  # and a stand-in Mutter (E13-S04), the GNOME window against a stand-in extension (E13-S05), and
-  # screen capture against a stand-in portal sharing a PipeWire test source (E13-S03). Ubuntu
+  # and a stand-in Mutter (E13-S04), the GNOME window against a stand-in extension (E13-S05), the
+  # KDE window against KWin 5.27 on its virtual backend (E13-S06), and screen capture against a
+  # stand-in portal sharing a PipeWire test source (E13-S03). Ubuntu
   # 22.04's sway is too old to have ext-idle-notify-v1, so this runs on 24.04, apart from the
   # 22.04 build.
   wayland:
@@ -154,11 +155,11 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Install sway, PipeWire, GStreamer and the D-Bus library
+      - name: Install sway, KWin, PipeWire, GStreamer and the D-Bus library
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends sway libdbus-1-dev pkg-config dbus \
-            libpipewire-0.3-dev libclang-dev pipewire pipewire-bin wireplumber \
+          sudo apt-get install -y --no-install-recommends sway kwin-wayland libdbus-1-dev \
+            pkg-config dbus libpipewire-0.3-dev libclang-dev pipewire pipewire-bin wireplumber \
             gstreamer1.0-tools gstreamer1.0-plugins-base gstreamer1.0-pipewire
 
       - name: Install the pinned Rust toolchain
@@ -166,7 +167,7 @@ jobs:
 
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
 
-      - name: Test the Wayland readers (sway, PipeWire, and stand-ins for Mutter, the GNOME extension and the portal)
+      - name: Test the Wayland readers (sway, KWin, PipeWire, and stand-ins for Mutter, the GNOME extension and the portal)
         run: >-
           dbus-run-session -- cargo test -p worklume-platform --features fake --test wayland
-          --test mutter --test gnome --test portal --locked -- --ignored
+          --test mutter --test gnome --test plasma --test portal --locked -- --ignored

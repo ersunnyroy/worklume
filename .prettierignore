@@ -25,3 +25,5 @@ apps/desktop/frontend/src/ipc/bindings.gen.ts
 packages/api-contract/test/fixtures/desktop-events.json
 # Written by apps/desktop/sync/tests/capabilities_fixture.rs
 packages/api-contract/test/fixtures/desktop-capabilities.json
+# A desktop entry template (Handlebars), not HTML
+apps/desktop/src-tauri/linux/worklume.desktop.hbs

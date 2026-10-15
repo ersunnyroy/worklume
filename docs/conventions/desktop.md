@@ -855,6 +855,56 @@ only to its allowlisted callers (`docs/spikes/E13-S01-wayland.md`).
 - Not covered: the extension on real hardware, GNOME 47 and 48, X11 windows under Xwayland
   (their class comes through the same way).
 
+## KDE active window
+
+E13-S06: on KDE Plasma under Wayland the window in front comes from KWin's Plasma window
+management protocol (`org_kde_plasma_window_management`), as the spike recommended over a KWin
+script (`docs/spikes/E13-S01-wayland.md`). The backlog's wording still says "KWin script"; the
+spike proposed the change for the owner to accept.
+
+**The grant.** KWin offers the protocol only to a client whose executable has a desktop entry
+listing it in `X-KDE-Wayland-Interfaces`: it compares the entry's `Exec` program, as a canonical
+path, with the client's executable. Tauri's default entry says `Exec=worklume-desktop`, which
+names no path, so the `.deb` and `.rpm` use their own template
+(`src-tauri/linux/worklume.desktop.hbs`): `Exec=/usr/bin/worklume-desktop` and the grant. An agent
+not installed from the packages finds the protocol missing; on KDE the sensors then read the
+window in front as a refused permission, so the capability report shows apps as
+`denied(permission_denied)` rather than as unsupported. Nothing else changes for the member: no
+prompt, no login.
+
+**The reader** (`linux::PlasmaWindow`):
+
+- A thread of its own, with its own connection, follows KWin's announcements: each window's
+  app ID, title and process ID, and which one is flagged active. A reading only looks up the
+  active one, so there is no polling; nothing active (the desktop, the lock screen) reads as
+  nothing in front. The loop is the idle reader's (`linux::wayland::pump`).
+- Version 13 and later name windows by UUID, older ones by number; both are handled. Version 16
+  (KWin 5.27) is the newest asked for.
+- The app is resolved from the desktop entries as on GNOME (`linux::apps`, shared with
+  `GnomeWindow`): KWin's app ID is the window's desktop-file name when it knows one, else its
+  resource class; then the executable from `/proc`.
+- The protocol pushes every window's title, so the reader holds them in memory, as KWin does.
+  They are never logged (its `Debug` shows a count), and a reading returns the active window's
+  title only when asked for.
+- A compositor that goes away reads as `Failed` on the next reading.
+
+**Tested** in `platform/tests/plasma.rs`, against a real KWin 5.27 on its virtual backend, one
+per test, with the grant as a desktop entry naming the test binary and windows the test opens
+itself:
+
+- the app from its entry, from its app ID without one; the title only when asked; focus moving
+  to a new window and back when it closes, with a title changed meanwhile; nothing in front
+  once all close;
+- without the grant, KWin withholds the protocol;
+- KWin going away reads as failed, and dropping the reader is prompt;
+- the whole report in a KDE session (a child process): apps granted with the grant,
+  `denied(permission_denied)` without.
+
+Not covered: Plasma 6 (Ubuntu 24.04 ships 5.27; the protocol is the same, and Plasma 6 offers
+versions 17 and 18, which the reader doesn't ask for), X11 windows under Xwayland, real
+hardware. KWin's binary has file capabilities, which an unprivileged start refuses, so the
+tests run a copy; it must keep the name `kwin_wayland`.
+
 ## Capability report
 
 E13-S02: the agent works out what it can measure on this device, feature by feature, so a
@@ -936,7 +986,8 @@ yet (E35).
   a moment after being turned on.
 - `platform/tests/x11.rs`: the whole report on Xvfb, without taking the timekeeper's input.
 - `platform/tests/wayland.rs`: the whole report in a sway session (a child process with the
-  session's variables): activity estimated, apps `desktop_unsupported`.
+  session's variables): activity estimated, apps `desktop_unsupported`; and in a KDE session
+  (`platform/tests/plasma.rs`), apps from KWin, or refused without the grant.
 - `sync/tests/capabilities_fixture.rs` and the contract's `desktop-capabilities.test.js` keep
   the request body and the contract's code lists in step, both ways; the web components'
   tests read the same fixture.
@@ -946,7 +997,7 @@ yet (E35).
   read `pending(consent_not_asked)` from the real portal, apps granted, activity reduced; after
   a capture that left the dialog up, `pending(consent_dialog_open)`; with the extension off at
   login, the report turned it on and read apps as granted.
-- Not covered: KDE's portal and Plasma, real hardware, the report reaching the server.
+- Not covered: KDE's portal, real hardware, the report reaching the server.
 
 ## Agent UI
 
@@ -1188,7 +1239,10 @@ What the `.deb` installs (checked on a build, E12-S05):
 - `/usr/bin/worklume-desktop`;
 - `/usr/share/applications/Worklume.desktop`, with `StartupWMClass=worklume-desktop`. The
   window's class comes from the program name, so the program name must not change, or docks
-  lose the window's icon;
+  lose the window's icon. Since E13-S06 the entry comes from `src-tauri/linux/worklume.desktop.hbs`
+  (both packages): `Exec=/usr/bin/worklume-desktop`, with a path, and
+  `X-KDE-Wayland-Interfaces=org_kde_plasma_window_management`, KWin's grant (see "KDE active
+  window");
 - icons under `/usr/share/icons/hicolor`, named `worklume-desktop`;
 - `/etc/xdg/autostart/com.worklume.agent.desktop` (E12-S05; the `.rpm` too), from
   `src-tauri/linux/com.worklume.agent.autostart.desktop`: `Exec=/usr/bin/worklume-desktop

@@ -3,3 +3,5 @@ allow-unwrap-in-tests = true
 allow-expect-in-tests = true
 allow-panic-in-tests = true
 allow-print-in-tests = true
+# Product names that look like code to the doc-markdown lint; ".." keeps the defaults.
+doc-valid-idents = ["KWin", ".."]

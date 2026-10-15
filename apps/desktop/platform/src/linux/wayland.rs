@@ -125,7 +125,8 @@ impl WaylandIdle {
             .spawn({
                 let conn = conn.clone();
                 move || {
-                    let result = read(&conn, &mut queue, &mut reader);
+                    let shared = Arc::clone(&reader.shared);
+                    let result = pump(&conn, &mut queue, &mut reader, &shared.stop);
                     notification.destroy();
                     notifier.destroy();
                     drop(conn.flush());
@@ -196,16 +197,18 @@ impl fmt::Debug for WaylandIdle {
     }
 }
 
-/// The reader's loop: handles what the compositor has sent, then waits for more.
-fn read(
+/// A reader thread's loop: handles what the compositor has sent to `state`, then waits for more,
+/// until `stop` is set. Shared with the Plasma window reader (`super::plasma`).
+pub(super) fn pump<D: 'static>(
     conn: &Connection,
-    queue: &mut EventQueue<Reader>,
-    reader: &mut Reader,
+    queue: &mut EventQueue<D>,
+    state: &mut D,
+    stop: &AtomicBool,
 ) -> Result<(), String> {
     let lost = |error: &dyn fmt::Display| format!("the Wayland connection failed: {error}");
-    while !reader.shared.stop.load(Ordering::Relaxed) {
+    while !stop.load(Ordering::Relaxed) {
         queue
-            .dispatch_pending(reader)
+            .dispatch_pending(state)
             .map_err(|error| lost(&error))?;
         conn.flush().map_err(|error| lost(&error))?;
         let Some(guard) = queue.prepare_read() else {
