@@ -29,3 +29,14 @@ peerDependencyRules:
     # openapi-typescript declares TypeScript ^5 but generates correctly with 6.0; the generated
     # client is typechecked with 6.0 in CI, which would catch a break.
     openapi-typescript>typescript: '6'
+# Security fixes for transitive dependencies, until their parents take them (reviewed in the
+# Security scans job; see docs/conventions/ci.md, "Security scans").
+overrides:
+  shell-quote: ^1.11.0 # GHSA-pqg4-j6r4-53mv, via react-native's devtools
+  source-map-js: ^1.2.2 # GHSA-68fv-2mgg-jv7q, via postcss in Expo and Vite
+# Advisories with no fixed release, in development tooling only (never shipped in an app).
+# Review again when a fix is published.
+auditConfig:
+  ignoreGhsas:
+    - GHSA-86w9-cpqp-85rv # node-forge, used by the Expo CLI's development code signing
+    - GHSA-vfj7-8cjw-p6xm # braces, used by Metro's file watcher through micromatch

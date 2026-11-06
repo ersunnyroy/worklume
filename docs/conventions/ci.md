@@ -27,8 +27,13 @@ workflows cannot be required: a check that never starts would block the merge fo
 - **Security scans** (also weekly, so new advisories surface without a code change):
   - gitleaks over the full history, from a release pinned by version and SHA-256.
   - `pnpm audit --audit-level high`: high and critical advisories fail the build. Moderate ones
-    are reviewed by hand. At the time of writing there is one, in `uuid` via Expo's build tooling,
-    which affects an API the tooling does not use.
+    are reviewed by hand; at the time of writing, `uuid` and `sprintf-js`, both in Expo's and
+    React Native's build tooling. A fixed transitive version is forced through `overrides` in
+    `pnpm-workspace.yaml` until the parent takes it (`shell-quote` and `source-map-js` since
+    2026-10-15). An advisory with no fixed release that affects only development tooling, never
+    an app, is listed in `auditConfig.ignoreGhsas` with its reason, and reviewed again when a fix
+    ships: `node-forge` (the Expo CLI's development code signing) and `braces` (Metro's file
+    watcher).
   - `cargo audit`: vulnerabilities fail the build. RustSec warnings do not; the current ones
     (`proc-macro-error` unmaintained, `glib` 0.18 unsound) come from the GTK 3 bindings Tauri uses
     on Linux and go away when Tauri moves off them.
